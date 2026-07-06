@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Attendance · DTU</title>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <header>
+    <h1>Attendance</h1>
+    <span id="who"></span>
+    <button id="logoutBtn" class="ghost" hidden>Log out</button>
+  </header>
+
+  <!-- Login -->
+  <section id="loginView" class="card">
+    <h2>Teacher / Admin login</h2>
+    <label>Email <input id="email" type="email" autocomplete="username" /></label>
+    <label>Password <input id="password" type="password" autocomplete="current-password" /></label>
+    <button id="loginBtn">Log in</button>
+    <p id="loginErr" class="err"></p>
+  </section>
+
+  <!-- Main app -->
+  <section id="appView" hidden>
+    <div class="card">
+      <h2>1 · Start a class session</h2>
+      <label>Course
+        <select id="courseSelect"></select>
+      </label>
+      <button id="startBtn">Start session</button>
+    </div>
+
+    <div class="card" id="captureCard" hidden>
+      <h2>2 · Capture the class photo</h2>
+      <p class="muted">Session #<span id="sessId"></span> · <span id="courseName"></span></p>
+      <input id="photoInput" type="file" accept="image/*" capture="environment" />
+      <img id="preview" alt="" hidden />
+      <button id="uploadBtn" disabled>Upload &amp; recognise</button>
+      <p id="status" class="muted"></p>
+    </div>
+
+    <div class="card" id="reviewCard" hidden>
+      <h2>3 · Review &amp; correct</h2>
+      <p class="muted">
+        Detected <b id="facesDetected">0</b> faces ·
+        <b id="presentCount">0</b> present of <b id="rosterCount">0</b>.
+        Tap a name to toggle present/absent, then finalise.
+      </p>
+      <ul id="rosterList" class="roster"></ul>
+      <button id="finalizeBtn">Finalise attendance</button>
+      <p id="finalMsg" class="ok"></p>
+    </div>
+  </section>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

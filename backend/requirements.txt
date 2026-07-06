@@ -1,0 +1,26 @@
+# Web / API
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+python-multipart==0.0.20
+pydantic==2.10.4
+pydantic-settings==2.7.1
+
+# DB
+sqlalchemy==2.0.36
+psycopg[binary]==3.2.3
+pgvector==0.3.6
+
+# Auth
+passlib==1.7.4
+bcrypt==4.0.1          # pinned: passlib 1.7.4 breaks on bcrypt>=4.1's version metadata
+pyjwt==2.10.1
+
+# Async processing
+celery==5.4.0
+redis==5.2.1
+
+# Face recognition
+insightface==0.7.3
+onnxruntime==1.20.1
+numpy==1.26.4
+opencv-python-headless==4.10.0.84

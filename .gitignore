@@ -1,0 +1,47 @@
+# ─────────────────────────────────────────────────────────────
+#  NEVER commit runtime data — especially biometric data.
+#  See DEPLOYMENT.md § "What must never enter git".
+# ─────────────────────────────────────────────────────────────
+
+# Secrets / config
+.env
+*.env
+!.env.example
+
+# Raw photos, embeddings, database dumps — biometric / personal data
+data/
+photos/
+*.jpg
+*.jpeg
+*.png
+*.db
+*.sqlite
+*.sql
+*.dump
+
+# ML model weights (downloaded on first run; use setup step, not git)
+*.onnx
+*.pt
+*.pth
+models/
+.insightface/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+
+# Node / frontend
+node_modules/
+dist/
+.vite/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

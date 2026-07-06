@@ -1,0 +1,90 @@
+:root {
+  --bg: #0f1216;
+  --card: #1a1f27;
+  --fg: #e8ecf1;
+  --muted: #97a1b0;
+  --accent: #3d7eff;
+  --present: #1f9d55;
+  --absent: #b23b3b;
+  --border: #2a313c;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+  background: var(--bg);
+  color: var(--fg);
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 0 16px 48px;
+}
+header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 20px 0;
+  border-bottom: 1px solid var(--border);
+}
+header h1 { font-size: 20px; margin: 0; flex: 0 0 auto; }
+#who { color: var(--muted); font-size: 14px; margin-left: auto; }
+.card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 20px;
+  margin-top: 20px;
+}
+h2 { font-size: 16px; margin: 0 0 16px; }
+label { display: block; margin-bottom: 12px; font-size: 14px; color: var(--muted); }
+input, select {
+  display: block;
+  width: 100%;
+  margin-top: 6px;
+  padding: 10px 12px;
+  background: #10141a;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--fg);
+  font-size: 15px;
+}
+button {
+  padding: 11px 18px;
+  border: 0;
+  border-radius: 8px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+}
+button:disabled { opacity: 0.5; cursor: not-allowed; }
+button.ghost { background: transparent; border: 1px solid var(--border); color: var(--muted); }
+.muted { color: var(--muted); font-size: 14px; }
+.err { color: #ff6b6b; font-size: 14px; }
+.ok { color: #4ade80; font-size: 14px; }
+#preview { max-width: 100%; border-radius: 8px; margin: 12px 0; display: block; }
+.roster { list-style: none; padding: 0; margin: 0 0 16px; }
+.roster li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  margin-bottom: 8px;
+  cursor: pointer;
+  user-select: none;
+}
+.roster li .name { font-size: 15px; }
+.roster li .roll { color: var(--muted); font-size: 12px; }
+.roster li .tag {
+  font-size: 12px;
+  font-weight: 700;
+  padding: 4px 10px;
+  border-radius: 999px;
+}
+.roster li.present { border-color: var(--present); }
+.roster li.present .tag { background: var(--present); color: #fff; }
+.roster li.absent { border-color: var(--absent); }
+.roster li.absent .tag { background: var(--absent); color: #fff; }
+.roster li .conf { color: var(--muted); font-size: 11px; margin-left: 8px; }

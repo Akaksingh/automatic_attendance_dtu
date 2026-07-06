@@ -1,0 +1,80 @@
+services:
+  db:
+    image: pgvector/pgvector:pg16
+    container_name: attendance_db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-attendance}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme}
+      POSTGRES_DB: ${POSTGRES_DB:-attendance}
+    volumes:
+      - db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-attendance}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    # Not exposed to host by default — DB stays internal to the compose network.
+    # Uncomment to inspect locally:
+    # ports:
+    #   - "5432:5432"
+
+  redis:
+    image: redis:7-alpine
+    container_name: attendance_redis
+    restart: unless-stopped
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  api:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    container_name: attendance_api
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-attendance}:${POSTGRES_PASSWORD:-changeme}@db:5432/${POSTGRES_DB:-attendance}
+      REDIS_URL: redis://redis:6379/0
+    volumes:
+      - photo_tmp:/data/photos          # transient raw photos (auto-purged)
+      - model_cache:/root/.insightface  # downloaded model weights (persist across restarts)
+    command: >
+      uvicorn app.main:app --host 0.0.0.0 --port 8000
+    ports:
+      - "8000:8000"
+
+  worker:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    container_name: attendance_worker
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-attendance}:${POSTGRES_PASSWORD:-changeme}@db:5432/${POSTGRES_DB:-attendance}
+      REDIS_URL: redis://redis:6379/0
+    volumes:
+      - photo_tmp:/data/photos
+      - model_cache:/root/.insightface
+    command: >
+      celery -A app.worker.celery_app worker --loglevel=info --concurrency=2
+
+volumes:
+  db_data:
+  photo_tmp:
+  model_cache:
