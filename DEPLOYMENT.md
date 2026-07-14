@@ -132,8 +132,12 @@ India's DPDP Act 2023. Before enrolling a single real student:
 - [ ] **Opt-out path**: offer manual roll-call for anyone who declines. Never
       make face recognition the only way to be marked present.
 - [ ] **Change all default secrets** in `.env`.
-- [ ] **TLS**: put the API behind a reverse proxy (nginx/Caddy) with HTTPS. Do
-      not expose port 8000 in cleartext beyond localhost.
+- [ ] **TLS**: use the bundled nginx profile — provision certs with
+      `./scripts/setup_tls.sh self-signed` (intranet) or
+      `./scripts/setup_tls.sh letsencrypt <domain> <email>` (public hostname,
+      auto-renews via the `certbot` service), then start with
+      `docker compose --profile prod up -d`. Do not expose port 8000 in
+      cleartext beyond localhost.
 - [ ] **Disk encryption**: enable full-disk / volume encryption on the server so
       the Postgres volume (embeddings) is encrypted at rest.
 - [ ] **Backups**: back up the `db_data` volume; store backups encrypted.
@@ -145,8 +149,10 @@ India's DPDP Act 2023. Before enrolling a single real student:
       Every match and correction is written to the `audit_log` table.
 - [ ] **Base image patching**: rebuild periodically so OS CVEs in the Python
       base image are picked up (`docker compose build --pull`).
-- [ ] **Bias / accuracy testing**: validate match accuracy across skin tones and
-      lighting before trusting auto-marks; keep the human review step.
+- [ ] **Bias / accuracy testing**: run `scripts/evaluate_accuracy.py` on a
+      labeled photo set (with `label,group` CSVs for skin tone / lighting
+      cohorts) before trusting auto-marks; investigate any flagged group and
+      keep the human review step regardless.
 - [ ] Loop in the college's data-protection officer / legal before go-live.
 
 ---
@@ -165,4 +171,23 @@ Backup the database:
 ```bash
 docker compose exec db pg_dump -U attendance attendance > backup_$(date +%F).sql
 # store this file encrypted, off-server; then delete the local plaintext copy
+```
+
+### Schema migrations
+
+The schema is managed by Alembic (`backend/alembic/`). The API runs
+`alembic upgrade head` automatically at startup, so upgrading a live server is:
+
+```bash
+git pull && docker compose build && docker compose up -d
+```
+
+Databases created before Alembic was introduced are adopted automatically
+(the matching baseline is stamped, then newer migrations apply). To add a
+schema change during development:
+
+```bash
+cd backend
+alembic revision -m "describe the change"   # then edit the generated file
+alembic upgrade head                        # apply to your dev DB
 ```
