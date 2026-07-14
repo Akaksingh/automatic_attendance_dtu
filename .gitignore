@@ -8,6 +8,12 @@
 *.env
 !.env.example
 
+# TLS certificates / private keys (provisioned by scripts/setup_tls.sh)
+nginx/certs/
+*.pem
+*.key
+*.crt
+
 # Raw photos, embeddings, database dumps — biometric / personal data
 data/
 photos/
