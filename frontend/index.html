@@ -3,57 +3,378 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Attendance · DTU</title>
+  <title>AttendAI · DTU</title>
+  <meta name="description" content="On-premises automatic attendance system powered by face recognition — Delhi Technological University." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="/static/style.css" />
 </head>
 <body>
-  <header>
-    <h1>Attendance</h1>
-    <span id="who"></span>
-    <button id="logoutBtn" class="ghost" hidden>Log out</button>
-  </header>
 
-  <!-- Login -->
-  <section id="loginView" class="card">
-    <h2>Teacher / Admin login</h2>
-    <label>Email <input id="email" type="email" autocomplete="username" /></label>
-    <label>Password <input id="password" type="password" autocomplete="current-password" /></label>
-    <button id="loginBtn">Log in</button>
-    <p id="loginErr" class="err"></p>
-  </section>
+<!-- ═══════════════════════════════════════════
+     LOGIN SCREEN
+═══════════════════════════════════════════ -->
+<div id="loginScreen" class="login-screen">
+  <div class="login-card">
+    <div class="login-logo">
+      <svg width="40" height="40" viewBox="0 0 40 40" fill="none">
+        <rect width="40" height="40" rx="10" fill="url(#grad)"/>
+        <path d="M20 10a5 5 0 1 1 0 10 5 5 0 0 1 0-10zm-8 18c0-4.4 3.6-8 8-8s8 3.6 8 8" stroke="#fff" stroke-width="2.5" stroke-linecap="round"/>
+        <path d="M28 24l3 3-5 5" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+        <defs>
+          <linearGradient id="grad" x1="0" y1="0" x2="40" y2="40">
+            <stop offset="0%" stop-color="#6366f1"/>
+            <stop offset="100%" stop-color="#4f46e5"/>
+          </linearGradient>
+        </defs>
+      </svg>
+      <span class="login-brand">AttendAI</span>
+    </div>
+    <h1 class="login-title">Sign in to your account</h1>
+    <p class="login-sub">DTU On-Premises Attendance System</p>
+    <form id="loginForm" autocomplete="on">
+      <div class="field-group">
+        <label for="loginEmail">Email address</label>
+        <input id="loginEmail" type="email" autocomplete="username" placeholder="admin@dtu.ac.in" required />
+      </div>
+      <div class="field-group">
+        <label for="loginPassword">Password</label>
+        <input id="loginPassword" type="password" autocomplete="current-password" placeholder="••••••••" required />
+      </div>
+      <p id="loginErr" class="form-error" hidden></p>
+      <button id="loginBtn" type="submit" class="btn btn-primary btn-full">
+        <span id="loginBtnText">Sign in</span>
+        <span id="loginSpinner" class="spinner" hidden></span>
+      </button>
+    </form>
+  </div>
+</div>
 
-  <!-- Main app -->
-  <section id="appView" hidden>
-    <div class="card">
-      <h2>1 · Start a class session</h2>
-      <label>Course
-        <select id="courseSelect"></select>
-      </label>
-      <button id="startBtn">Start session</button>
+<!-- ═══════════════════════════════════════════
+     MAIN APP SHELL
+═══════════════════════════════════════════ -->
+<div id="appShell" class="app-shell" hidden>
+
+  <!-- Sidebar -->
+  <aside class="sidebar" id="sidebar">
+    <div class="sidebar-top">
+      <div class="sidebar-brand">
+        <svg width="28" height="28" viewBox="0 0 40 40" fill="none">
+          <rect width="40" height="40" rx="10" fill="url(#grad2)"/>
+          <path d="M20 10a5 5 0 1 1 0 10 5 5 0 0 1 0-10zm-8 18c0-4.4 3.6-8 8-8s8 3.6 8 8" stroke="#fff" stroke-width="2.5" stroke-linecap="round"/>
+          <defs>
+            <linearGradient id="grad2" x1="0" y1="0" x2="40" y2="40">
+              <stop offset="0%" stop-color="#6366f1"/>
+              <stop offset="100%" stop-color="#4f46e5"/>
+            </linearGradient>
+          </defs>
+        </svg>
+        <span>AttendAI</span>
+      </div>
+
+      <nav class="sidebar-nav">
+        <!-- Teacher & Admin -->
+        <a href="#" class="nav-item active" data-view="take-attendance" id="navAttendance">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4"/></svg>
+          Take Attendance
+        </a>
+        <a href="#" class="nav-item" data-view="my-sessions" id="navSessions">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+          Sessions
+        </a>
+
+        <!-- Admin only -->
+        <div class="nav-section-label admin-only">Admin</div>
+        <a href="#" class="nav-item admin-only" data-view="admin-courses" id="navCourses">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 3h6a4 4 0 014 4v14a3 3 0 00-3-3H2z"/><path d="M22 3h-6a4 4 0 00-4 4v14a3 3 0 013-3h7z"/></svg>
+          Courses
+        </a>
+        <a href="#" class="nav-item admin-only" data-view="admin-students" id="navStudents">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87"/><path d="M16 3.13a4 4 0 010 7.75"/></svg>
+          Students
+        </a>
+        <a href="#" class="nav-item admin-only" data-view="admin-users" id="navUsers">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M6 20v-2a4 4 0 014-4h4a4 4 0 014 4v2"/></svg>
+          Users
+        </a>
+        <a href="#" class="nav-item admin-only" data-view="admin-reports" id="navReports">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
+          Reports
+        </a>
+      </nav>
     </div>
 
-    <div class="card" id="captureCard" hidden>
-      <h2>2 · Capture the class photo</h2>
-      <p class="muted">Session #<span id="sessId"></span> · <span id="courseName"></span></p>
-      <input id="photoInput" type="file" accept="image/*" capture="environment" />
-      <img id="preview" alt="" hidden />
-      <button id="uploadBtn" disabled>Upload &amp; recognise</button>
-      <p id="status" class="muted"></p>
+    <div class="sidebar-bottom">
+      <div class="user-pill" id="userPill">
+        <div class="user-avatar" id="userAvatar">A</div>
+        <div class="user-info">
+          <div class="user-name" id="userFullName">–</div>
+          <div class="user-role" id="userRole">–</div>
+        </div>
+      </div>
+      <button class="btn btn-ghost btn-sm logout-btn" id="logoutBtn">Sign out</button>
+    </div>
+  </aside>
+
+  <!-- Main content area -->
+  <main class="main-content">
+    <div class="topbar">
+      <div class="page-title" id="pageTitle">Take Attendance</div>
+      <div class="topbar-actions" id="topbarActions"></div>
     </div>
 
-    <div class="card" id="reviewCard" hidden>
-      <h2>3 · Review &amp; correct</h2>
-      <p class="muted">
-        Detected <b id="facesDetected">0</b> faces ·
-        <b id="presentCount">0</b> present of <b id="rosterCount">0</b>.
-        Tap a name to toggle present/absent, then finalise.
-      </p>
-      <ul id="rosterList" class="roster"></ul>
-      <button id="finalizeBtn">Finalise attendance</button>
-      <p id="finalMsg" class="ok"></p>
-    </div>
-  </section>
+    <!-- ── Take Attendance (Teacher flow) ── -->
+    <section id="view-take-attendance" class="view active">
+      <div class="step-wizard">
+        <div class="step active" id="step1">
+          <div class="step-num">1</div><div class="step-label">Start Session</div>
+        </div>
+        <div class="step-line"></div>
+        <div class="step" id="step2">
+          <div class="step-num">2</div><div class="step-label">Upload Photo</div>
+        </div>
+        <div class="step-line"></div>
+        <div class="step" id="step3">
+          <div class="step-num">3</div><div class="step-label">Review</div>
+        </div>
+        <div class="step-line"></div>
+        <div class="step" id="step4">
+          <div class="step-num">4</div><div class="step-label">Finalise</div>
+        </div>
+      </div>
 
-  <script src="/static/app.js"></script>
+      <!-- Step 1: pick course -->
+      <div class="card" id="cardStart">
+        <h2 class="card-title">Select a course</h2>
+        <div class="field-group">
+          <label for="courseSelect">Course</label>
+          <select id="courseSelect"><option value="">Loading…</option></select>
+        </div>
+        <button id="startBtn" class="btn btn-primary" disabled>Start Session →</button>
+      </div>
+
+      <!-- Step 2: upload photo -->
+      <div class="card" id="cardCapture" hidden>
+        <h2 class="card-title">Upload class photo</h2>
+        <p class="text-muted">Session <span class="badge badge-blue" id="sessIdBadge">–</span> &nbsp; <span id="courseNameLabel">–</span></p>
+        <div class="upload-zone" id="uploadZone">
+          <input id="photoInput" type="file" accept="image/*" capture="environment" />
+          <div class="upload-zone-inner" id="uploadZoneInner">
+            <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M17 8l-5-5-5 5M12 3v12"/></svg>
+            <p>Tap to capture or select a photo</p>
+            <p class="text-muted" style="font-size:12px">JPEG / PNG, max 20 MB</p>
+          </div>
+          <img id="photoPreview" alt="Preview" hidden />
+        </div>
+        <div class="row gap-8" style="margin-top:16px">
+          <button id="uploadBtn" class="btn btn-primary" disabled>Recognise Faces →</button>
+          <button id="cancelSessionBtn" class="btn btn-ghost">Cancel</button>
+        </div>
+        <div class="progress-row" id="progressRow" hidden>
+          <div class="progress-bar">
+            <div class="progress-fill" id="progressFill"></div>
+          </div>
+          <span class="text-muted" id="progressLabel">Processing…</span>
+        </div>
+      </div>
+
+      <!-- Step 3: review -->
+      <div class="card" id="cardReview" hidden>
+        <h2 class="card-title">Review auto-marks</h2>
+        <div class="stats-row" id="statsRow">
+          <div class="stat-chip">
+            <span class="stat-num" id="statFaces">0</span>
+            <span class="stat-label">Faces detected</span>
+          </div>
+          <div class="stat-chip present">
+            <span class="stat-num" id="statPresent">0</span>
+            <span class="stat-label">Present</span>
+          </div>
+          <div class="stat-chip absent">
+            <span class="stat-num" id="statAbsent">0</span>
+            <span class="stat-label">Absent</span>
+          </div>
+          <div class="stat-chip">
+            <span class="stat-num" id="statTotal">0</span>
+            <span class="stat-label">In roster</span>
+          </div>
+        </div>
+        <p class="text-muted" style="margin-bottom:12px;font-size:13px">Tap any name to toggle present ↔ absent before finalising.</p>
+        <div class="search-row">
+          <input id="rosterSearch" type="search" placeholder="Search by name or roll…" class="input-sm" />
+        </div>
+        <ul id="rosterList" class="roster-list"></ul>
+        <div class="row gap-8" style="margin-top:16px">
+          <button id="finalizeBtn" class="btn btn-success">✓ Finalise Attendance</button>
+          <a id="exportSessionBtn" href="#" class="btn btn-ghost" hidden>↓ Export CSV</a>
+        </div>
+        <div id="finalMsg" class="alert alert-success" hidden></div>
+      </div>
+    </section>
+
+    <!-- ── My Sessions ── -->
+    <section id="view-my-sessions" class="view" hidden>
+      <div class="card">
+        <div class="card-header-row">
+          <h2 class="card-title">Recent Sessions</h2>
+        </div>
+        <!-- Filter bar -->
+        <div class="filter-row" style="margin-bottom:16px">
+          <div class="field-group" style="flex:1">
+            <label for="sessionCourseFilter">Course</label>
+            <select id="sessionCourseFilter">
+              <option value="">All courses</option>
+            </select>
+          </div>
+          <div class="field-group">
+            <label for="sessionStateFilter">State</label>
+            <select id="sessionStateFilter">
+              <option value="">All states</option>
+              <option value="review">Awaiting Review</option>
+              <option value="finalized">Finalised</option>
+              <option value="processing">Processing</option>
+              <option value="failed">Failed</option>
+            </select>
+          </div>
+        </div>
+        <div id="sessionsTableWrap">
+          <table class="data-table" id="sessionsTable">
+            <thead>
+              <tr><th>Date / Time</th><th>Course</th><th>State</th><th>Faces</th><th>Teacher</th><th>Actions</th></tr>
+            </thead>
+            <tbody id="sessionsTableBody"></tbody>
+          </table>
+          <p class="text-muted" id="sessionsEmpty" hidden>No sessions yet — start one from the Take Attendance view.</p>
+          <button class="btn btn-ghost btn-sm" id="sessionsLoadMore" hidden style="margin-top:12px">Load more…</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- ── Admin: Courses ── -->
+    <section id="view-admin-courses" class="view" hidden>
+      <div class="card">
+        <div class="card-header-row">
+          <h2 class="card-title">Courses</h2>
+          <button class="btn btn-primary btn-sm" id="addCourseBtn">+ Add Course</button>
+        </div>
+        <input type="search" class="input-sm" id="courseSearch" placeholder="Search courses…" style="margin-bottom:16px" />
+        <table class="data-table" id="coursesTable">
+          <thead>
+            <tr><th>Code</th><th>Name</th><th>Dept</th><th>Enrolled</th><th>Actions</th></tr>
+          </thead>
+          <tbody id="coursesTableBody"></tbody>
+        </table>
+        <p class="text-muted" id="coursesEmpty" hidden>No courses yet.</p>
+      </div>
+
+      <!-- Course roster panel (slides in) -->
+      <div class="slide-panel" id="rosterPanel" hidden>
+        <div class="slide-panel-header">
+          <h3 id="rosterPanelTitle">Roster</h3>
+          <button class="btn btn-ghost btn-sm" id="closeRosterBtn">✕ Close</button>
+        </div>
+        <div class="row gap-8" style="margin-bottom:12px">
+          <input type="text" id="rosterAddInput" class="input-sm" placeholder="Roll no(s), comma-separated" />
+          <button class="btn btn-primary btn-sm" id="rosterAddBtn">Add</button>
+        </div>
+        <table class="data-table">
+          <thead><tr><th>Roll</th><th>Name</th><th>Consent</th><th>Face</th><th></th></tr></thead>
+          <tbody id="rosterTableBody"></tbody>
+        </table>
+        <p class="text-muted" id="rosterEmpty" hidden>No students in roster yet.</p>
+      </div>
+    </section>
+
+    <!-- ── Admin: Students ── -->
+    <section id="view-admin-students" class="view" hidden>
+      <div class="card">
+        <div class="card-header-row">
+          <h2 class="card-title">Students</h2>
+          <button class="btn btn-primary btn-sm" id="addStudentBtn">+ Add Student</button>
+        </div>
+        <input type="search" class="input-sm" id="studentSearch" placeholder="Search by name or roll…" style="margin-bottom:16px" />
+        <table class="data-table" id="studentsTable">
+          <thead>
+            <tr><th>Roll</th><th>Name</th><th>Dept</th><th>Consent</th><th>Face</th><th>Actions</th></tr>
+          </thead>
+          <tbody id="studentsTableBody"></tbody>
+        </table>
+        <p class="text-muted" id="studentsEmpty" hidden>No students yet.</p>
+        <button class="btn btn-ghost btn-sm" id="studentsLoadMore" hidden>Load more…</button>
+      </div>
+    </section>
+
+    <!-- ── Admin: Users ── -->
+    <section id="view-admin-users" class="view" hidden>
+      <div class="card">
+        <div class="card-header-row">
+          <h2 class="card-title">System Users</h2>
+          <button class="btn btn-primary btn-sm" id="addUserBtn">+ Add User</button>
+        </div>
+        <table class="data-table" id="usersTable">
+          <thead>
+            <tr><th>Name</th><th>Email</th><th>Role</th><th>Status</th><th>Actions</th></tr>
+          </thead>
+          <tbody id="usersTableBody"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- ── Admin: Reports ── -->
+    <section id="view-admin-reports" class="view" hidden>
+      <div class="card">
+        <h2 class="card-title">Attendance Reports</h2>
+        <div class="filter-row">
+          <div class="field-group" style="flex:1">
+            <label for="reportCourse">Course</label>
+            <select id="reportCourse"><option value="">Select course…</option></select>
+          </div>
+          <div class="field-group">
+            <label for="reportFrom">From</label>
+            <input type="date" id="reportFrom" class="input-sm" />
+          </div>
+          <div class="field-group">
+            <label for="reportTo">To</label>
+            <input type="date" id="reportTo" class="input-sm" />
+          </div>
+          <div style="align-self:flex-end;display:flex;gap:8px">
+            <button class="btn btn-primary btn-sm" id="runReportBtn">Run Report</button>
+            <a id="downloadReportBtn" class="btn btn-ghost btn-sm" href="#" hidden>↓ CSV</a>
+          </div>
+        </div>
+        <div id="reportResults" hidden>
+          <div class="report-summary" id="reportSummary"></div>
+          <table class="data-table" id="reportTable">
+            <thead>
+              <tr><th>Roll</th><th>Name</th><th>Sessions</th><th>Attended</th><th>%</th><th>Visual</th></tr>
+            </thead>
+            <tbody id="reportTableBody"></tbody>
+          </table>
+        </div>
+        <p class="text-muted" id="reportEmpty">Select a course and click Run Report.</p>
+      </div>
+    </section>
+  </main>
+</div>
+
+<!-- ═══════════════════════════════════════════
+     MODALS
+═══════════════════════════════════════════ -->
+<div class="modal-overlay" id="modalOverlay" hidden>
+  <div class="modal" id="modal">
+    <div class="modal-header">
+      <h3 id="modalTitle">Modal</h3>
+      <button class="btn btn-ghost btn-sm" id="modalClose">✕</button>
+    </div>
+    <div class="modal-body" id="modalBody"></div>
+    <div class="modal-footer" id="modalFooter"></div>
+  </div>
+</div>
+
+<!-- Toast container -->
+<div id="toastContainer" class="toast-container"></div>
+
+<script src="/static/app.js"></script>
 </body>
 </html>
