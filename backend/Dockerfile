@@ -20,11 +20,18 @@ COPY backend/app ./app
 COPY frontend ./frontend
 
 # Non-root runtime user
-RUN useradd -m appuser && mkdir -p /data/photos && chown -R appuser /data /app
-# insightface caches model weights under the home dir; keep it writable + on a volume
-RUN mkdir -p /root/.insightface && chown -R appuser /root/.insightface || true
+RUN useradd -m appuser \
+    && mkdir -p /data/photos /data/model_cache \
+    && chown -R appuser /data /app
 USER appuser
 
+# Point InsightFace at the writable volume (not /root which appuser can't access)
+ENV INSIGHTFACE_HOME=/data/model_cache \
+    HOME=/home/appuser
+
 EXPOSE 8000
+
+HEALTHCHECK --interval=15s --timeout=5s --start-period=30s --retries=3 \
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')" || exit 1
 
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
