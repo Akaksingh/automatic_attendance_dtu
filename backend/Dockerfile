@@ -17,6 +17,8 @@ COPY backend/requirements.txt .
 RUN pip install --upgrade pip && pip install -r requirements.txt
 
 COPY backend/app ./app
+COPY backend/alembic.ini ./alembic.ini
+COPY backend/alembic ./alembic
 COPY frontend ./frontend
 
 # Non-root runtime user

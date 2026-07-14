@@ -24,12 +24,20 @@ def get_db() -> Generator[Session, None, None]:
 
 
 def init_db() -> None:
-    """Create the pgvector extension and all tables. Idempotent."""
-    # Import models so they're registered on Base.metadata before create_all.
+    """Bring the schema up to date. Idempotent.
+
+    Postgres uses Alembic migrations (with automatic adoption of pre-Alembic
+    databases); SQLite (tests) falls back to create_all since the migrations
+    use Postgres-only features (pgvector, native enums).
+    """
+    # Import models so they're registered on Base.metadata.
     from . import models  # noqa: F401
 
-    # CREATE EXTENSION is Postgres-only; tests run against SQLite.
     if engine.dialect.name == "postgresql":
         with engine.begin() as conn:
             conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
-    Base.metadata.create_all(bind=engine)
+        from .migrations import run_migrations
+
+        run_migrations()
+    else:
+        Base.metadata.create_all(bind=engine)
