@@ -28,6 +28,8 @@ def init_db() -> None:
     # Import models so they're registered on Base.metadata before create_all.
     from . import models  # noqa: F401
 
-    with engine.begin() as conn:
-        conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
+    # CREATE EXTENSION is Postgres-only; tests run against SQLite.
+    if engine.dialect.name == "postgresql":
+        with engine.begin() as conn:
+            conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
     Base.metadata.create_all(bind=engine)

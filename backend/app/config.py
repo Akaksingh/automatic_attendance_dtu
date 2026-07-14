@@ -27,6 +27,7 @@ class Settings(BaseSettings):
     # Storage / retention
     photo_dir: str = "/data/photos"
     photo_retention_minutes: int = 120
+    retention_enabled: bool = True  # disable in tests
 
     # CORS
     cors_origins: str = "http://localhost:8000"
