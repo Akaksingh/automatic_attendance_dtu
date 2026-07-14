@@ -12,6 +12,7 @@ from .database import SessionLocal, init_db
 from .models import Role, User
 from .retention import start_retention_loop
 from .routes import auth, courses, sessions, students
+from .routes import reports
 from .security import hash_password
 
 logger = logging.getLogger("attendance")
@@ -46,11 +47,17 @@ def _bootstrap_admin() -> None:
 async def lifespan(app: FastAPI):
     init_db()
     _bootstrap_admin()
-    start_retention_loop()
+    if settings.retention_enabled:
+        start_retention_loop()
     yield
 
 
-app = FastAPI(title="Attendance DTU", version="0.1.0", lifespan=lifespan)
+app = FastAPI(
+    title="Attendance DTU",
+    version="0.2.0",
+    description="On-premises automatic attendance system for DTU.",
+    lifespan=lifespan,
+)
 
 app.add_middleware(
     CORSMiddleware,
@@ -64,6 +71,7 @@ app.include_router(auth.router)
 app.include_router(students.router)
 app.include_router(courses.router)
 app.include_router(sessions.router)
+app.include_router(reports.router)
 
 
 @app.get("/health", tags=["meta"])
@@ -71,7 +79,7 @@ def health():
     return {"status": "ok"}
 
 
-# Serve the minimal teacher web app if it's present in the image.
+# Serve the teacher web app if it's present in the image.
 import os  # noqa: E402
 
 if os.path.isdir(FRONTEND_DIR):

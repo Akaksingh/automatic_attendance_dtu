@@ -1,5 +1,6 @@
 """Pydantic request/response models."""
 from datetime import datetime
+from typing import Optional
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
@@ -25,6 +26,12 @@ class UserCreate(BaseModel):
     role: Role = Role.teacher
 
 
+class UserUpdate(BaseModel):
+    full_name: Optional[str] = None
+    is_active: Optional[bool] = None
+    role: Optional[Role] = None
+
+
 class UserOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id: int
@@ -32,6 +39,7 @@ class UserOut(BaseModel):
     full_name: str
     role: Role
     is_active: bool
+    created_at: datetime
 
 
 # ---- Students ----
@@ -42,6 +50,12 @@ class StudentCreate(BaseModel):
     biometric_consent: bool = False
 
 
+class StudentUpdate(BaseModel):
+    full_name: Optional[str] = None
+    department: Optional[str] = None
+    biometric_consent: Optional[bool] = None
+
+
 class StudentOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id: int
@@ -49,7 +63,13 @@ class StudentOut(BaseModel):
     full_name: str
     department: str
     biometric_consent: bool
+    consent_recorded_at: Optional[datetime] = None
     has_embedding: bool = False
+    created_at: datetime
+
+
+class ConsentRequest(BaseModel):
+    granted: bool = True
 
 
 # ---- Courses / enrollment ----
@@ -59,12 +79,22 @@ class CourseCreate(BaseModel):
     department: str = ""
 
 
+class CourseUpdate(BaseModel):
+    name: Optional[str] = None
+    department: Optional[str] = None
+
+
 class CourseOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id: int
     code: str
     name: str
     department: str
+
+
+class CourseDetail(CourseOut):
+    """Course with roster count for the admin UI."""
+    enrolled_count: int = 0
 
 
 class EnrollRequest(BaseModel):
@@ -92,6 +122,7 @@ class AttendanceRow(BaseModel):
     status: AttendanceStatus
     method: AttendanceMethod
     confidence: float | None = None
+    liveness_score: float | None = None  # None = not checked; 0-1 when ONNX model is active
 
 
 class SessionOut(BaseModel):
@@ -108,6 +139,19 @@ class SessionDetail(SessionOut):
     records: list[AttendanceRow] = []
 
 
+class SessionListItem(BaseModel):
+    """Lightweight session row for the history list — no attendance records."""
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    course_id: int
+    course_code: str
+    course_name: str
+    state: SessionState
+    started_at: datetime
+    faces_detected: int
+    teacher_name: str
+
+
 class CorrectionItem(BaseModel):
     student_id: int
     status: AttendanceStatus
@@ -115,3 +159,23 @@ class CorrectionItem(BaseModel):
 
 class CorrectionRequest(BaseModel):
     corrections: list[CorrectionItem]
+
+
+# ---- Reports ----
+class StudentAttendanceSummary(BaseModel):
+    student_id: int
+    roll_no: str
+    full_name: str
+    total_sessions: int
+    attended: int
+    percentage: float
+
+
+class CourseAttendanceReport(BaseModel):
+    course_id: int
+    course_code: str
+    course_name: str
+    from_date: Optional[datetime] = None
+    to_date: Optional[datetime] = None
+    total_sessions: int
+    students: list[StudentAttendanceSummary]

@@ -1,11 +1,13 @@
-"""Student CRUD, face enrollment, and the DPDP 'right to erasure' endpoint."""
+"""Student CRUD, face enrollment, consent recording, and the DPDP 'right to erasure' endpoint."""
+from datetime import datetime, timezone
+
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from sqlalchemy.orm import Session
 
 from ..database import get_db
 from ..face.engine import embed_single_face
 from ..models import FaceEmbedding, Student, User
-from ..schemas import StudentCreate, StudentOut
+from ..schemas import ConsentRequest, StudentCreate, StudentOut, StudentUpdate
 from ..security import audit, get_current_user, require_admin
 
 router = APIRouter(prefix="/students", tags=["students"])
@@ -18,7 +20,9 @@ def _to_out(s: Student) -> StudentOut:
         full_name=s.full_name,
         department=s.department,
         biometric_consent=s.biometric_consent,
+        consent_recorded_at=s.consent_recorded_at,
         has_embedding=s.embedding is not None,
+        created_at=s.created_at,
     )
 
 
@@ -30,11 +34,18 @@ def create_student(
 ):
     if db.query(Student).filter(Student.roll_no == payload.roll_no).first():
         raise HTTPException(status_code=409, detail="roll_no already exists")
-    s = Student(**payload.model_dump())
+    data = payload.model_dump()
+    # If consent is given at creation, record who created it and when
+    consent_flag = data.pop("biometric_consent", False)
+    s = Student(**data, biometric_consent=consent_flag)
+    if consent_flag:
+        s.consent_recorded_at = datetime.now(timezone.utc)
+        s.consent_recorded_by = admin.id
     db.add(s)
     db.flush()
     audit(db, "create", "student", s.id, actor_id=admin.id)
     db.commit()
+    db.refresh(s)
     return _to_out(s)
 
 
@@ -42,11 +53,108 @@ def create_student(
 def list_students(
     db: Session = Depends(get_db),
     _: User = Depends(get_current_user),
-    limit: int = 100,
+    limit: int = 200,
     offset: int = 0,
+    search: str = "",
 ):
-    rows = db.query(Student).order_by(Student.id).offset(offset).limit(limit).all()
+    q = db.query(Student)
+    if search:
+        like = f"%{search}%"
+        q = q.filter(
+            Student.full_name.ilike(like) | Student.roll_no.ilike(like)
+        )
+    rows = q.order_by(Student.roll_no).offset(offset).limit(limit).all()
     return [_to_out(s) for s in rows]
+
+
+@router.get("/{student_id}", response_model=StudentOut)
+def get_student(
+    student_id: int,
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
+):
+    student = db.get(Student, student_id)
+    if not student:
+        raise HTTPException(status_code=404, detail="Student not found")
+    return _to_out(student)
+
+
+@router.patch("/{student_id}", response_model=StudentOut)
+def update_student(
+    student_id: int,
+    payload: StudentUpdate,
+    db: Session = Depends(get_db),
+    admin: User = Depends(require_admin),
+):
+    student = db.get(Student, student_id)
+    if not student:
+        raise HTTPException(status_code=404, detail="Student not found")
+    updates = payload.model_dump(exclude_none=True)
+    # Handle consent flag changes with timestamp tracking
+    if "biometric_consent" in updates:
+        new_consent = updates.pop("biometric_consent")
+        if new_consent != student.biometric_consent:
+            student.biometric_consent = new_consent
+            if new_consent:
+                student.consent_recorded_at = datetime.now(timezone.utc)
+                student.consent_recorded_by = admin.id
+                audit(db, "consent_granted", "student", student.id, actor_id=admin.id)
+            else:
+                student.consent_recorded_at = None
+                student.consent_recorded_by = None
+                audit(db, "consent_revoked", "student", student.id, actor_id=admin.id)
+    for key, val in updates.items():
+        setattr(student, key, val)
+    audit(db, "update", "student", student.id, actor_id=admin.id)
+    db.commit()
+    db.refresh(student)
+    return _to_out(student)
+
+
+@router.delete("/{student_id}", status_code=204)
+def delete_student(
+    student_id: int,
+    db: Session = Depends(get_db),
+    admin: User = Depends(require_admin),
+):
+    """Full right-to-erasure: delete student record, embedding, and all attendance history."""
+    student = db.get(Student, student_id)
+    if not student:
+        raise HTTPException(status_code=404, detail="Student not found")
+    audit(db, "delete", "student", student.id, actor_id=admin.id,
+          detail=f"roll_no={student.roll_no}")
+    db.delete(student)
+    db.commit()
+
+
+@router.post("/{student_id}/consent", response_model=StudentOut)
+def record_consent(
+    student_id: int,
+    payload: ConsentRequest,
+    db: Session = Depends(get_db),
+    admin: User = Depends(require_admin),
+):
+    """Explicitly record or revoke biometric consent with a named audit trail entry."""
+    student = db.get(Student, student_id)
+    if not student:
+        raise HTTPException(status_code=404, detail="Student not found")
+    student.biometric_consent = payload.granted
+    if payload.granted:
+        student.consent_recorded_at = datetime.now(timezone.utc)
+        student.consent_recorded_by = admin.id
+        audit(db, "consent_granted", "student", student.id, actor_id=admin.id)
+    else:
+        student.consent_recorded_at = None
+        student.consent_recorded_by = None
+        audit(db, "consent_revoked", "student", student.id, actor_id=admin.id)
+        # Revoke consent must also delete any existing embedding
+        if student.embedding:
+            db.delete(student.embedding)
+            audit(db, "erase_face", "student", student.id, actor_id=admin.id,
+                  detail="auto-erased on consent revocation")
+    db.commit()
+    db.refresh(student)
+    return _to_out(student)
 
 
 @router.post("/{student_id}/face", response_model=StudentOut)

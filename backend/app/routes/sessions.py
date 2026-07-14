@@ -21,12 +21,60 @@ from ..schemas import (
     CorrectionRequest,
     SessionCreate,
     SessionDetail,
+    SessionListItem,
     SessionOut,
 )
 from ..security import audit, get_current_user
 from ..worker import process_session
 
 router = APIRouter(prefix="/sessions", tags=["sessions"])
+
+
+@router.get("", response_model=list[SessionListItem])
+def list_sessions(
+    course_id: int | None = None,
+    state: SessionState | None = None,
+    limit: int = 50,
+    offset: int = 0,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """List sessions. Teachers see only their own; admins see all.
+
+    Optional query params:
+      - course_id: filter by course
+      - state: filter by session state (created/processing/review/finalized/failed)
+      - limit / offset: pagination
+    """
+    from ..models import Course, Role
+
+    q = (
+        db.query(ClassSession, Course, User)
+        .join(Course, Course.id == ClassSession.course_id)
+        .outerjoin(User, User.id == ClassSession.teacher_id)
+    )
+    if user.role != Role.admin:
+        q = q.filter(ClassSession.teacher_id == user.id)
+    if course_id is not None:
+        q = q.filter(ClassSession.course_id == course_id)
+    if state is not None:
+        q = q.filter(ClassSession.state == state)
+
+    rows = q.order_by(ClassSession.started_at.desc()).offset(offset).limit(limit).all()
+
+    return [
+        SessionListItem(
+            id=s.id,
+            course_id=s.course_id,
+            course_code=c.code,
+            course_name=c.name,
+            state=s.state,
+            started_at=s.started_at,
+            faces_detected=s.faces_detected,
+            teacher_name=t.full_name if t else "—",
+        )
+        for s, c, t in rows
+    ]
 
 
 @router.post("", response_model=SessionOut, status_code=201)

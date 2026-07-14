@@ -5,6 +5,8 @@ Design notes for privacy/compliance (see DEPLOYMENT.md):
     long-term photos. Embeddings are one-way and cannot be reversed into a face.
   * Raw class photos live transiently on disk and are purged by the retention job.
   * Every automated match and every manual correction is written to audit_log.
+  * Biometric consent is stored with timestamp and the admin who recorded it
+    (DPDP Act 2023 §7 — explicit, informed, per-purpose consent required).
 """
 from __future__ import annotations
 
@@ -13,6 +15,7 @@ from datetime import datetime, timezone
 
 from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
+    Boolean,
     DateTime,
     Enum,
     Float,
@@ -45,8 +48,9 @@ class AttendanceStatus(str, enum.Enum):
 
 
 class AttendanceMethod(str, enum.Enum):
-    auto = "auto"        # marked by face match
-    manual = "manual"    # set/corrected by a teacher
+    auto = "auto"            # marked by face match
+    manual = "manual"        # set/corrected by a teacher
+    liveness_fail = "liveness_fail"  # face detected but failed anti-spoofing
 
 
 class SessionState(str, enum.Enum):
@@ -65,7 +69,7 @@ class User(Base):
     full_name: Mapped[str] = mapped_column(String(255), default="")
     password_hash: Mapped[str] = mapped_column(String(255))
     role: Mapped[Role] = mapped_column(Enum(Role), default=Role.teacher)
-    is_active: Mapped[bool] = mapped_column(default=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     sessions: Mapped[list["ClassSession"]] = relationship(back_populates="teacher")
@@ -78,8 +82,17 @@ class Student(Base):
     roll_no: Mapped[str] = mapped_column(String(64), unique=True, index=True)
     full_name: Mapped[str] = mapped_column(String(255))
     department: Mapped[str] = mapped_column(String(128), default="")
+
     # Consent is legally required before biometric processing (DPDP Act 2023).
-    biometric_consent: Mapped[bool] = mapped_column(default=False)
+    # We record not just the flag but who recorded it and when for the audit trail.
+    biometric_consent: Mapped[bool] = mapped_column(Boolean, default=False)
+    consent_recorded_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    consent_recorded_by: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     embedding: Mapped["FaceEmbedding | None"] = relationship(
@@ -87,6 +100,9 @@ class Student(Base):
     )
     enrollments: Mapped[list["Enrollment"]] = relationship(
         back_populates="student", cascade="all, delete-orphan"
+    )
+    consent_recorder: Mapped["User | None"] = relationship(
+        "User", foreign_keys=[consent_recorded_by]
     )
 
 
@@ -117,6 +133,9 @@ class Course(Base):
     enrollments: Mapped[list["Enrollment"]] = relationship(
         back_populates="course", cascade="all, delete-orphan"
     )
+    sessions: Mapped[list["ClassSession"]] = relationship(
+        back_populates="course", cascade="all, delete-orphan"
+    )
 
 
 class Enrollment(Base):
@@ -141,11 +160,11 @@ class ClassSession(Base):
     state: Mapped[SessionState] = mapped_column(Enum(SessionState), default=SessionState.created)
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     photo_path: Mapped[str | None] = mapped_column(String(512), nullable=True)
-    photo_purged: Mapped[bool] = mapped_column(default=False)
+    photo_purged: Mapped[bool] = mapped_column(Boolean, default=False)
     faces_detected: Mapped[int] = mapped_column(Integer, default=0)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
 
-    course: Mapped[Course] = relationship()
+    course: Mapped[Course] = relationship(back_populates="sessions")
     teacher: Mapped["User | None"] = relationship(back_populates="sessions")
     records: Mapped[list["Attendance"]] = relationship(
         back_populates="session", cascade="all, delete-orphan"
