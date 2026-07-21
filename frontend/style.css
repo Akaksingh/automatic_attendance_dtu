@@ -650,3 +650,5 @@ input::placeholder { color: var(--fg-dim); }
   .view { padding: 16px; }
   .filter-row { flex-direction: column; }
 }
+
+[hidden] { display: none !important; }
