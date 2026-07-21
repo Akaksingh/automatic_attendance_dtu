@@ -116,7 +116,7 @@ async function showApp() {
 
   // Show admin UI elements
   if (_me.role === "admin") {
-    document.querySelectorAll(".admin-only").forEach(e => e.style.display = "");
+    document.querySelectorAll(".admin-only").forEach(e => e.style.display = "flex");
   }
 
   activateView("take-attendance");
@@ -131,7 +131,10 @@ function activateView(viewId) {
   document.querySelectorAll(".nav-item").forEach(n => n.classList.remove("active"));
 
   const view = $(`view-${viewId}`);
-  if (view) view.classList.add("active");
+  if (view) {
+      view.classList.add("active");
+      view.hidden = false;
+  }
 
   const nav = document.querySelector(`[data-view="${viewId}"]`);
   if (nav) nav.classList.add("active");
