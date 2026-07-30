@@ -1,0 +1,1 @@
+"""Enhanced attendance backend package."""

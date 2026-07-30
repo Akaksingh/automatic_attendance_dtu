@@ -44,6 +44,7 @@ venv/
 # Node / frontend
 node_modules/
 dist/
+dev-dist/
 .vite/
 
 # OS / editor

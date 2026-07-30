@@ -1,0 +1,39 @@
+# Development dependencies for backend_v1.
+# The FastAPI server and Celery worker run from your IDE, not in this stack.
+name: attendance_v1_development
+
+services:
+  db:
+    image: pgvector/pgvector:pg16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${DEV_POSTGRES_USER:-attendance}
+      POSTGRES_PASSWORD: ${DEV_POSTGRES_PASSWORD:-changeme}
+      POSTGRES_DB: ${DEV_POSTGRES_DB:-attendance}
+    ports:
+      - "${DEV_POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - development_db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "${DEV_REDIS_PORT:-6379}:6379"
+    volumes:
+      - development_redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  development_db_data:
+  development_redis_data:
