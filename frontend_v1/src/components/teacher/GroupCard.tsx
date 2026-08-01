@@ -1,8 +1,48 @@
-import { Archive, ArrowUpRight, BookOpen, RotateCcw, Users } from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
-import type { Group } from "@/types/api";
+import {Archive, ArrowUpRight, BookOpen, RotateCcw, Users} from "lucide-react";
+import {Button} from "@/components/ui/button";
+import {Card, CardContent} from "@/components/ui/card";
+import type {Group} from "@/types/api";
 
-export function GroupCard({ group, onOpen, onArchive, onUnarchive }: { group: Group; onOpen: () => void; onArchive: () => void; onUnarchive: () => void }) {
-  return <Card className="group overflow-hidden border-border/70 transition hover:-translate-y-0.5 hover:border-primary/40 hover:shadow-lg"><button className="block w-full text-left" onClick={onOpen}><div className="relative h-32 overflow-hidden bg-gradient-to-br from-primary via-primary/85 to-slate-700 p-5 text-primary-foreground"><div className="absolute -right-8 -top-16 size-44 rounded-full border-[24px] border-white/10" /><div className="absolute -bottom-12 right-12 size-28 rounded-full bg-white/10" /><div className="relative flex size-10 items-center justify-center rounded-lg bg-white/15"><BookOpen className="size-5" /></div><span className="absolute bottom-4 right-5 text-xs font-medium text-white/75">{group.archived_at ? "Archived" : "Active"}</span></div><CardContent className="min-h-32 py-5"><div className="flex items-start justify-between gap-3"><div className="min-w-0"><h3 className="truncate text-lg font-semibold tracking-tight group-hover:text-primary">{group.name}</h3><p className="mt-1 text-sm text-muted-foreground">Join code <span className="font-mono font-medium text-foreground">{group.join_code}</span></p></div><ArrowUpRight className="mt-1 size-4 shrink-0 text-muted-foreground transition group-hover:text-primary" /></div><div className="mt-5 flex items-center gap-4 text-xs text-muted-foreground"><span className="inline-flex items-center gap-1.5"><Users className="size-3.5" />Roster managed inside class</span><span>Created {new Date(group.created_at).toLocaleDateString()}</span></div></CardContent></button><div className="flex items-center justify-between border-t bg-muted/20 px-5 py-3"><span className="text-xs font-medium text-muted-foreground">{group.archived_at ? "Read-only history" : "Ready for attendance"}</span>{!group.archived_at ? <Button variant="outline" size="sm" onClick={(event) => { event.stopPropagation(); onArchive(); }}><Archive className="size-3.5" />Archive</Button> : <Button variant="outline" size="sm" onClick={(event) => { event.stopPropagation(); onUnarchive(); }}><RotateCcw className="size-3.5" />Unarchive</Button>}</div></Card>;
+export function GroupCard({group, onOpen, onArchive, onUnarchive}: {
+    group: Group;
+    onOpen: () => void;
+    onArchive: () => void;
+    onUnarchive: () => void
+}) {
+    return <Card
+        className="group py-0 overflow-hidden border-border/70 transition hover:-translate-y-0.5 hover:border-primary/40 hover:shadow-lg">
+        <button className="block w-full text-left" onClick={onOpen}>
+            <div
+                className="relative h-32 overflow-hidden bg-gradient-to-br from-primary via-primary/85 to-slate-700 p-5 text-primary-foreground">
+                <div className="absolute -right-8 -top-16 size-44 rounded-full border-[24px] border-white/10"/>
+                <div className="absolute -bottom-12 right-12 size-28 rounded-full bg-white/10"/>
+                <div className="relative flex size-10 items-center justify-center rounded-lg bg-white/15"><BookOpen
+                    className="size-5"/></div>
+                <span
+                    className="absolute bottom-4 right-5 text-xs font-medium text-white/75">{group.archived_at ? "Archived" : "Active"}</span>
+            </div>
+            <CardContent className="min-h-32 py-5">
+                <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0"><h3
+                        className="truncate text-lg font-semibold tracking-tight group-hover:text-primary">{group.name}</h3>
+                        <p className="mt-1 text-sm text-muted-foreground">Join code <span
+                            className="font-mono font-medium text-foreground">{group.join_code}</span></p></div>
+                    <ArrowUpRight
+                        className="mt-1 size-4 shrink-0 text-muted-foreground transition group-hover:text-primary"/>
+                </div>
+                <div className="mt-5 flex items-center gap-4 text-xs text-muted-foreground"><span
+                    className="inline-flex items-center gap-1.5"><Users className="size-3.5"/>Roster managed inside class</span><span>Created {new Date(group.created_at).toLocaleDateString()}</span>
+                </div>
+            </CardContent></button>
+        <div className="flex items-center justify-between border-t bg-muted/20 px-5 py-3"><span
+            className="text-xs font-medium text-muted-foreground">{group.archived_at ? "Read-only history" : "Ready for attendance"}</span>{!group.archived_at ?
+            <Button variant="outline" size="sm" onClick={(event) => {
+                event.stopPropagation();
+                onArchive();
+            }}><Archive className="size-3.5"/>Archive</Button> :
+            <Button variant="outline" size="sm" onClick={(event) => {
+                event.stopPropagation();
+                onUnarchive();
+            }}><RotateCcw className="size-3.5"/>Unarchive</Button>}</div>
+    </Card>;
 }

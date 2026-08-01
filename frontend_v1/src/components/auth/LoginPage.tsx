@@ -1,18 +1,77 @@
-import { useState } from "react";
-import { ArrowRight, BookOpenCheck, LockKeyhole, Mail } from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { useAuth } from "@/context/AuthContext";
-import type { Role } from "@/types/api";
+import {useState} from "react";
+import {ArrowRight, BookOpenCheck, LockKeyhole, Mail} from "lucide-react";
+import {Button} from "@/components/ui/button";
+import {Card, CardContent} from "@/components/ui/card";
+import {Input} from "@/components/ui/input";
+import {Label} from "@/components/ui/label";
+import {useAuth} from "@/context/AuthContext";
+import type {Role} from "@/types/api";
 
-export function LoginPage({ onAuthenticated }: { onAuthenticated: (role: Role) => void }) {
-  const { signIn } = useAuth();
-  const [email, setEmail] = useState(""); const [password, setPassword] = useState(""); const [error, setError] = useState(""); const [busy, setBusy] = useState(false);
-  async function submit(event: React.FormEvent<HTMLFormElement>) { event.preventDefault(); setBusy(true); setError(""); try { const user = await signIn(email, password); onAuthenticated(user.role); } catch (err) { setError(err instanceof Error ? err.message : "Unable to sign in"); } finally { setBusy(false); } }
-  return <main className="flex min-h-screen items-center justify-center bg-muted/40 px-4 py-10"><section className="grid w-full max-w-5xl overflow-hidden rounded-3xl border bg-background shadow-xl lg:grid-cols-[1.05fr_0.95fr]">
-    <div className="hidden bg-primary p-12 text-primary-foreground lg:flex lg:flex-col lg:justify-between"><div className="flex size-12 items-center justify-center rounded-2xl bg-primary-foreground text-primary"><BookOpenCheck /></div><div><p className="mb-4 text-sm font-semibold uppercase tracking-[0.2em] text-primary-foreground/70">ClassLens</p><h1 className="max-w-sm text-4xl font-semibold leading-tight">A calmer way to run attendance.</h1><p className="mt-5 max-w-sm text-primary-foreground/70">One secure workspace for every classroom, group, and attendance session.</p></div><p className="text-sm text-primary-foreground/60">Role-based access for your institution.</p></div>
-    <Card className="border-0 py-0 shadow-none"><CardContent className="p-7 sm:p-12"><div className="mb-8 lg:hidden"><div className="mb-5 flex size-11 items-center justify-center rounded-xl bg-primary text-primary-foreground"><BookOpenCheck /></div><p className="text-sm font-semibold uppercase tracking-[0.16em] text-muted-foreground">ClassLens</p></div><h2 className="text-2xl font-semibold tracking-tight">Welcome back</h2><p className="mt-2 text-sm text-muted-foreground">Sign in to continue to your workspace.</p><form className="mt-8 space-y-5" onSubmit={submit}><div className="space-y-2"><Label htmlFor="email">Email address</Label><div className="relative"><Mail className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" /><Input id="email" value={email} onChange={(e) => setEmail(e.target.value)} type="email" autoComplete="email" placeholder="you@dtu.ac.in" className="pl-10" required /></div></div><div className="space-y-2"><Label htmlFor="password">Password</Label><div className="relative"><LockKeyhole className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" /><Input id="password" value={password} onChange={(e) => setPassword(e.target.value)} type="password" autoComplete="current-password" placeholder="Enter your password" className="pl-10" required /></div></div><Button className="w-full" type="submit" disabled={busy}>{busy ? "Signing in…" : "Continue"}<ArrowRight className="size-4" /></Button></form>{error && <p role="alert" className="mt-5 rounded-md border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">{error}</p>}</CardContent></Card>
-  </section></main>;
+export function LoginPage({onAuthenticated}: { onAuthenticated: (role: Role) => void }) {
+    const {signIn} = useAuth();
+    const [email, setEmail] = useState("");
+    const [password, setPassword] = useState("");
+    const [error, setError] = useState("");
+    const [busy, setBusy] = useState(false);
+
+    async function submit(event: React.FormEvent<HTMLFormElement>) {
+        event.preventDefault();
+        setBusy(true);
+        setError("");
+        try {
+            const user = await signIn(email, password);
+            onAuthenticated(user.role);
+        } catch (err) {
+            setError(err instanceof Error ? err.message : "Unable to sign in");
+        } finally {
+            setBusy(false);
+        }
+    }
+
+    return <main className="flex min-h-screen items-center justify-center bg-muted/40 px-4 py-10">
+        <section
+            className="grid w-full max-w-5xl overflow-hidden rounded-3xl border bg-background shadow-xl lg:grid-cols-[1.05fr_0.95fr]">
+            <div className="hidden bg-primary p-12 text-primary-foreground lg:flex lg:flex-col lg:justify-between">
+                <div className="flex flex-row items-center gap-4">
+                    <img src="/dtulogo.svg" alt="DTU" className="size-16"/>
+                    <p className="text-md font-semibold uppercase tracking-[0.2em] text-primary-foreground md:text-2xl">DTU<br/>
+                        ClassLens</p>
+                </div>
+                <div>
+                    <h1 className="max-w-sm text-4xl font-semibold leading-tight">A calmer way to run attendance.</h1><p
+                    className="mt-5 max-w-sm text-primary-foreground/70">One secure workspace for every classroom,
+                    group, and attendance session.</p></div>
+                <p className="text-sm text-primary-foreground/60">Role-based access for your institution.</p></div>
+            <Card className="border-0 py-0 shadow-none"><CardContent className="p-7 sm:p-12">
+                <div className="mb-8 lg:hidden">
+                    <div className="flex flex-row items-center justify-center gap-4">
+                        <img src="/dtulogo.svg" alt="DTU" className="size-16"/>
+                        <p className="text-xl font-semibold uppercase tracking-[0.16em] text-foreground"> DTU<br />
+                            ClassLens</p>
+                    </div>
+                </div>
+                <h2 className="text-2xl font-semibold tracking-tight">Welcome back</h2><p
+                className="mt-2 text-sm text-muted-foreground">Sign in to continue to your workspace.</p>
+                <form className="mt-8 space-y-5" onSubmit={submit}>
+                    <div className="space-y-2"><Label htmlFor="email">Email address</Label>
+                        <div className="relative"><Mail
+                            className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground"/><Input
+                            id="email" value={email} onChange={(e) => setEmail(e.target.value)} type="email"
+                            autoComplete="email" placeholder="you@dtu.ac.in" className="pl-10" required/></div>
+                    </div>
+                    <div className="space-y-2"><Label htmlFor="password">Password</Label>
+                        <div className="relative"><LockKeyhole
+                            className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground"/><Input
+                            id="password" value={password} onChange={(e) => setPassword(e.target.value)} type="password"
+                            autoComplete="current-password" placeholder="Enter your password" className="pl-10"
+                            required/></div>
+                    </div>
+                    <Button className="w-full" type="submit"
+                            disabled={busy}>{busy ? "Signing in…" : "Continue"}<ArrowRight className="size-4"/></Button>
+                </form>
+                {error && <p role="alert"
+                             className="mt-5 rounded-md border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">{error}</p>}
+            </CardContent></Card>
+        </section>
+    </main>;
 }

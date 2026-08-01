@@ -1,35 +1,158 @@
-import { useEffect, useMemo, useState } from "react";
-import { Archive, BookOpen, CheckCircle2, LayoutGrid, Plus, RefreshCw, Search, Users, X } from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
-import { AppShell, type NavigationItem } from "@/components/layout/AppShell";
-import { CreateGroupDialog } from "@/components/teacher/CreateGroupDialog";
-import { ConfirmDialog } from "@/components/ui/confirm-dialog";
-import { GroupCard } from "@/components/teacher/GroupCard";
-import { apiRequest } from "@/lib/api";
-import type { Group } from "@/types/api";
+import {useEffect, useMemo, useState} from "react";
+import {Archive, CheckCircle2, LayoutGrid, Plus, RefreshCw, Search, X} from "lucide-react";
+import {Button} from "@/components/ui/button";
+import {Card, CardContent} from "@/components/ui/card";
+import {Input} from "@/components/ui/input";
+import {AppShell, type NavigationItem} from "@/components/layout/AppShell";
+import {CreateGroupDialog} from "@/components/teacher/CreateGroupDialog";
+import {ConfirmDialog} from "@/components/ui/confirm-dialog";
+import {GroupCard} from "@/components/teacher/GroupCard";
+import {apiRequest} from "@/lib/api";
+import type {Group} from "@/types/api";
 
-const navigation: NavigationItem[] = [{ key: "classes", label: "Classes", icon: LayoutGrid }, { key: "attendance", label: "Attendance", icon: CheckCircle2 }];
-function navigate(path: string) { window.history.pushState({}, "", path); window.dispatchEvent(new PopStateEvent("popstate")); }
+const navigation: NavigationItem[] = [{key: "classes", label: "Classes", icon: LayoutGrid}, {
+    key: "attendance",
+    label: "Attendance",
+    icon: CheckCircle2
+}];
 
-export function TeacherDashboardPage() {
-  const [groups, setGroups] = useState<Group[]>([]); const [tab, setTab] = useState<"active" | "archived">("active"); const [search, setSearch] = useState(""); const [dialogOpen, setDialogOpen] = useState(false); const [archiveTarget, setArchiveTarget] = useState<Group | null>(null); const [unarchiveTarget, setUnarchiveTarget] = useState<Group | null>(null); const [error, setError] = useState(""); const [loading, setLoading] = useState(true);
-  const activeGroups = useMemo(() => groups.filter((group) => !group.archived_at), [groups]); const archivedGroups = useMemo(() => groups.filter((group) => Boolean(group.archived_at)), [groups]); const visibleGroups = (tab === "active" ? activeGroups : archivedGroups).filter((group) => `${group.name} ${group.join_code}`.toLowerCase().includes(search.toLowerCase()));
-  async function loadGroups() { setLoading(true); try { const result = await apiRequest<{ items: Group[] }>("/api/groups?page=1&page_size=100"); setGroups(result.items); } catch (err) { setError(err instanceof Error ? err.message : "Unable to load classes"); } finally { setLoading(false); } }
-  useEffect(() => { void loadGroups(); }, []);
-  async function archive(group: Group) { try { const updated = await apiRequest<Group>(`/api/groups/${group.id}/archive`, { method: "POST" }); setGroups((current) => current.map((item) => item.id === updated.id ? updated : item)); setTab("archived"); } catch (err) { setError(err instanceof Error ? err.message : "Unable to archive class"); } }
-  async function unarchive(group: Group) { try { const updated = await apiRequest<Group>(`/api/groups/${group.id}/unarchive`, { method: "POST" }); setGroups((current) => current.map((item) => item.id === updated.id ? updated : item)); setTab("active"); } catch (err) { setError(err instanceof Error ? err.message : "Unable to unarchive class"); } }
-  function handleNavigation(key: string) { if (key === "attendance" && activeGroups[0]) navigate(`/teacher/groups/${activeGroups[0].id}?tab=attendance`); else navigate("/teacher"); }
-  return <AppShell navigation={navigation} activeKey="classes" onNavigate={handleNavigation}><main className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-10"><div className="mb-8 flex flex-wrap items-end justify-between gap-5"><div><div className="mb-3 flex items-center gap-2 text-sm font-medium text-primary"><BookOpen className="size-4" />Teacher workspace</div><h1 className="text-3xl font-semibold tracking-tight sm:text-4xl">Your classes</h1><p className="mt-2 max-w-xl text-muted-foreground">Manage rosters, start attendance sessions, and review results from one place.</p></div><div className="flex gap-2"><div className="relative"><Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" /><Input className="w-56 pl-9" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search classes…" /></div><Button variant="outline" onClick={() => void loadGroups()}><RefreshCw className="size-4" />Refresh</Button><Button onClick={() => setDialogOpen(true)}><Plus className="size-4" />Create class</Button></div></div>
-    {error && <div className="mb-6 flex items-center justify-between rounded-xl border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive"><span>{error}</span><button onClick={() => setError("")}><X className="size-4" /></button></div>}
-    <div className="mb-8 grid gap-3 sm:grid-cols-3"><Stat label="Active classes" value={activeGroups.length} icon={BookOpen} /><Stat label="Archived classes" value={archivedGroups.length} icon={Archive} /><Stat label="Total classes" value={groups.length} icon={Users} /></div>
-    <div className="mb-6 flex items-center justify-between border-b"><div className="flex gap-6"><TabButton active={tab === "active"} onClick={() => setTab("active")} label="Active classes" count={activeGroups.length} /><TabButton active={tab === "archived"} onClick={() => setTab("archived")} label="Archived" count={archivedGroups.length} /></div></div>
-    {loading ? <div className="py-20 text-center text-sm text-muted-foreground">Loading your classes…</div> : visibleGroups.length === 0 ? <EmptyState archived={tab === "archived"} onCreate={() => setDialogOpen(true)} /> : <div className="grid gap-5 sm:grid-cols-2 xl:grid-cols-3">{visibleGroups.map((group) => <GroupCard key={group.id} group={group} onOpen={() => navigate(`/teacher/groups/${group.id}`)} onArchive={() => setArchiveTarget(group)} onUnarchive={() => setUnarchiveTarget(group)} />)}</div>}
-    </main><CreateGroupDialog open={dialogOpen} onOpenChange={setDialogOpen} onCreated={(group) => { setGroups((current) => [group, ...current]); navigate(`/teacher/groups/${group.id}`); }} onError={setError} /><ConfirmDialog open={Boolean(archiveTarget)} onOpenChange={(open) => { if (!open) setArchiveTarget(null); }} title="Archive class?" description={`${archiveTarget?.name ?? "This class"} will become read-only, but its attendance history will remain available.`} confirmLabel="Archive class" destructive onConfirm={() => { if (!archiveTarget) return; void archive(archiveTarget).then(() => setArchiveTarget(null)); }} /><ConfirmDialog open={Boolean(unarchiveTarget)} onOpenChange={(open) => { if (!open) setUnarchiveTarget(null); }} title="Unarchive class?" description={`${unarchiveTarget?.name ?? "This class"} will become active again, allowing roster and attendance changes.`} confirmLabel="Unarchive class" onConfirm={() => { if (!unarchiveTarget) return; void unarchive(unarchiveTarget).then(() => setUnarchiveTarget(null)); }} /></AppShell>;
+function navigate(path: string) {
+    window.history.pushState({}, "", path);
+    window.dispatchEvent(new PopStateEvent("popstate"));
 }
 
-function Stat({ label, value, icon: Icon }: { label: string; value: number; icon: typeof BookOpen }) { return <Card className="gap-3 py-4"><CardContent className="flex items-center gap-4"><div className="flex size-10 items-center justify-center rounded-lg bg-primary/10 text-primary"><Icon className="size-5" /></div><div><p className="text-2xl font-semibold tracking-tight">{value}</p><p className="text-xs text-muted-foreground">{label}</p></div></CardContent></Card>; }
-function TabButton({ active, onClick, label, count }: { active: boolean; onClick: () => void; label: string; count: number }) { return <button onClick={onClick} className={`relative pb-3 text-sm font-medium transition ${active ? "text-foreground" : "text-muted-foreground hover:text-foreground"}`}>{label}<span className={`ml-2 rounded-full px-2 py-0.5 text-xs ${active ? "bg-primary/10 text-primary" : "bg-muted"}`}>{count}</span>{active && <span className="absolute inset-x-0 bottom-0 h-0.5 rounded-full bg-primary" />}</button>; }
+export function TeacherDashboardPage() {
+    const [groups, setGroups] = useState<Group[]>([]);
+    const [tab, setTab] = useState<"active" | "archived">("active");
+    const [search, setSearch] = useState("");
+    const [dialogOpen, setDialogOpen] = useState(false);
+    const [archiveTarget, setArchiveTarget] = useState<Group | null>(null);
+    const [unarchiveTarget, setUnarchiveTarget] = useState<Group | null>(null);
+    const [error, setError] = useState("");
+    const [loading, setLoading] = useState(true);
+    const activeGroups = useMemo(() => groups.filter((group) => !group.archived_at), [groups]);
+    const archivedGroups = useMemo(() => groups.filter((group) => Boolean(group.archived_at)), [groups]);
+    const visibleGroups = (tab === "active" ? activeGroups : archivedGroups).filter((group) => `${group.name} ${group.join_code}`.toLowerCase().includes(search.toLowerCase()));
 
-function EmptyState({ archived, onCreate }: { archived: boolean; onCreate: () => void }) { return <Card className="border-dashed"><CardContent className="flex flex-col items-center justify-center py-20 text-center"><div className="mb-4 flex size-14 items-center justify-center rounded-2xl bg-primary/10 text-primary"><Archive className="size-6" /></div><h2 className="text-lg font-semibold">{archived ? "No archived classes" : "Create your first class"}</h2><p className="mt-2 max-w-sm text-sm text-muted-foreground">{archived ? "Classes you archive will appear here." : "Create a class, add your students, and start taking attendance."}</p>{!archived && <Button className="mt-5" onClick={onCreate}><Plus className="size-4" />Create class</Button>}</CardContent></Card>; }
+    async function loadGroups() {
+        setLoading(true);
+        try {
+            const result = await apiRequest<{ items: Group[] }>("/api/groups?page=1&page_size=100");
+            setGroups(result.items);
+        } catch (err) {
+            setError(err instanceof Error ? err.message : "Unable to load classes");
+        } finally {
+            setLoading(false);
+        }
+    }
+
+    useEffect(() => {
+        void loadGroups();
+    }, []);
+
+    async function archive(group: Group) {
+        try {
+            const updated = await apiRequest<Group>(`/api/groups/${group.id}/archive`, {method: "POST"});
+            setGroups((current) => current.map((item) => item.id === updated.id ? updated : item));
+            setTab("archived");
+        } catch (err) {
+            setError(err instanceof Error ? err.message : "Unable to archive class");
+        }
+    }
+
+    async function unarchive(group: Group) {
+        try {
+            const updated = await apiRequest<Group>(`/api/groups/${group.id}/unarchive`, {method: "POST"});
+            setGroups((current) => current.map((item) => item.id === updated.id ? updated : item));
+            setTab("active");
+        } catch (err) {
+            setError(err instanceof Error ? err.message : "Unable to unarchive class");
+        }
+    }
+
+    function handleNavigation(key: string) {
+        if (key === "attendance" && activeGroups[0]) navigate(`/teacher/groups/${activeGroups[0].id}?tab=attendance`); else navigate("/teacher");
+    }
+
+    return <AppShell navigation={navigation} activeKey="classes" onNavigate={handleNavigation}>
+        <main className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-10">
+            <div className="mb-8 flex flex-wrap items-end justify-between gap-5">
+                <div>
+                    <h1 className="text-3xl font-semibold tracking-tight sm:text-4xl">Your classes</h1><p
+                    className="mt-2 max-w-xl text-muted-foreground">Manage rosters, start attendance sessions, and
+                    review results from one place.</p></div>
+                <div className="grid md:grid-cols-5 grid-cols-1 w-full gap-x-2 gap-y-4">
+                    <div className="relative col-span-3">
+                        <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground"/>
+                        <Input
+                        className="w-full pl-9" value={search} onChange={(event) => setSearch(event.target.value)}
+                        placeholder="Search classes…"/>
+                    </div>
+                    <div className="grid grid-cols-2 gap-2 col-span-2">
+                    <Button variant="outline" onClick={() => void loadGroups()}><RefreshCw
+                        className="size-4"/>Refresh</Button>
+                    <Button onClick={() => setDialogOpen(true)}><Plus
+                    className="size-4"/>Create Class</Button>
+                    </div>
+                    </div>
+            </div>
+            {error && <div
+                className="mb-6 flex items-center justify-between rounded-xl border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive">
+                <span>{error}</span>
+                <button onClick={() => setError("")}><X className="size-4"/></button>
+            </div>}
+            <div className="mb-6 flex items-center justify-between border-b">
+                <div className="flex gap-6"><TabButton active={tab === "active"} onClick={() => setTab("active")}
+                                                       label="Active classes" count={activeGroups.length}/><TabButton
+                    active={tab === "archived"} onClick={() => setTab("archived")} label="Archived"
+                    count={archivedGroups.length}/></div>
+            </div>
+            {loading ? <div className="py-20 text-center text-sm text-muted-foreground">Loading your
+                classes…</div> : visibleGroups.length === 0 ?
+                <EmptyState archived={tab === "archived"} onCreate={() => setDialogOpen(true)}/> :
+                <div className="grid gap-5 sm:grid-cols-2 xl:grid-cols-3">{visibleGroups.map((group) => <GroupCard
+                    key={group.id} group={group} onOpen={() => navigate(`/teacher/groups/${group.id}`)}
+                    onArchive={() => setArchiveTarget(group)} onUnarchive={() => setUnarchiveTarget(group)}/>)}</div>}
+        </main>
+        <CreateGroupDialog open={dialogOpen} onOpenChange={setDialogOpen} onCreated={(group) => {
+            setGroups((current) => [group, ...current]);
+            navigate(`/teacher/groups/${group.id}`);
+        }} onError={setError}/><ConfirmDialog open={Boolean(archiveTarget)} onOpenChange={(open) => {
+        if (!open) setArchiveTarget(null);
+    }} title="Archive class?"
+                                              description={`${archiveTarget?.name ?? "This class"} will become read-only, but its attendance history will remain available.`}
+                                              confirmLabel="Archive class" destructive onConfirm={() => {
+        if (!archiveTarget) return;
+        void archive(archiveTarget).then(() => setArchiveTarget(null));
+    }}/><ConfirmDialog open={Boolean(unarchiveTarget)} onOpenChange={(open) => {
+        if (!open) setUnarchiveTarget(null);
+    }} title="Unarchive class?"
+                       description={`${unarchiveTarget?.name ?? "This class"} will become active again, allowing roster and attendance changes.`}
+                       confirmLabel="Unarchive class" onConfirm={() => {
+        if (!unarchiveTarget) return;
+        void unarchive(unarchiveTarget).then(() => setUnarchiveTarget(null));
+    }}/></AppShell>;
+}
+
+function TabButton({active, onClick, label, count}: {
+    active: boolean;
+    onClick: () => void;
+    label: string;
+    count: number
+}) {
+    return <button onClick={onClick}
+                   className={`relative pb-3 text-sm font-medium transition ${active ? "text-foreground" : "text-muted-foreground hover:text-foreground"}`}>{label}<span
+        className={`ml-2 rounded-full px-2 py-0.5 text-xs ${active ? "bg-primary/10 text-primary" : "bg-muted"}`}>{count}</span>{active &&
+        <span className="absolute inset-x-0 bottom-0 h-0.5 rounded-full bg-primary"/>}</button>;
+}
+
+function EmptyState({archived, onCreate}: { archived: boolean; onCreate: () => void }) {
+    return <Card className="border-dashed"><CardContent
+        className="flex flex-col items-center justify-center py-20 text-center">
+        <div className="mb-4 flex size-14 items-center justify-center rounded-2xl bg-primary/10 text-primary"><Archive
+            className="size-6"/></div>
+        <h2 className="text-lg font-semibold">{archived ? "No archived classes" : "Create your first class"}</h2><p
+        className="mt-2 max-w-sm text-sm text-muted-foreground">{archived ? "Classes you archive will appear here." : "Create a class, add your students, and start taking attendance."}</p>{!archived &&
+        <Button className="mt-5" onClick={onCreate}><Plus className="size-4"/>Create class</Button>}
+    </CardContent></Card>;
+}

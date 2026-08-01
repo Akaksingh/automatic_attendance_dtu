@@ -1,28 +1,146 @@
-import { useEffect, useState } from "react";
-import { ArrowLeft, Archive, BarChart3, BookOpen, CheckCircle2, Copy, Pencil, Users, X } from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
-import { AppShell } from "@/components/layout/AppShell";
-import { ConfirmDialog } from "@/components/ui/confirm-dialog";
-import { EditGroupDialog } from "@/components/teacher/EditGroupDialog";
-import { RosterManager } from "@/components/teacher/RosterManager";
-import { SessionPanel } from "@/components/teacher/SessionPanel";
-import { GroupSummary } from "@/components/teacher/GroupSummary";
-import { apiRequest } from "@/lib/api";
-import type { Group, RosterStudent } from "@/types/api";
+import {useEffect, useState} from "react";
+import {ArrowLeft, Archive, BarChart3, BookOpen, CheckCircle2, Copy, Pencil, Users, X} from "lucide-react";
+import {Button} from "@/components/ui/button";
+import {Card, CardContent} from "@/components/ui/card";
+import {AppShell} from "@/components/layout/AppShell";
+import {ConfirmDialog} from "@/components/ui/confirm-dialog";
+import {EditGroupDialog} from "@/components/teacher/EditGroupDialog";
+import {RosterManager} from "@/components/teacher/RosterManager";
+import {SessionPanel} from "@/components/teacher/SessionPanel";
+import {GroupSummary} from "@/components/teacher/GroupSummary";
+import {apiRequest} from "@/lib/api";
+import type {Group, RosterStudent} from "@/types/api";
 
-function navigate(path: string) { window.history.pushState({}, "", path); window.dispatchEvent(new PopStateEvent("popstate")); }
+function navigate(path: string) {
+    window.history.pushState({}, "", path);
+    window.dispatchEvent(new PopStateEvent("popstate"));
+}
 
-export function TeacherGroupPage({ groupId }: { groupId: string }) {
-  const queryTab = new URLSearchParams(window.location.search).get("tab");
-  const [tab, setTab] = useState<"roster" | "attendance" | "summary">(queryTab === "attendance" || queryTab === "summary" ? queryTab : "roster");
-  const [group, setGroup] = useState<Group | null>(null); const [roster, setRoster] = useState<RosterStudent[]>([]); const [archiveOpen, setArchiveOpen] = useState(false); const [editOpen, setEditOpen] = useState(false); const [error, setError] = useState(""); const [loading, setLoading] = useState(true);
-  async function loadGroup() { try { const result = await apiRequest<{ items: Group[] }>("/api/groups?page=1&page_size=100"); const found = result.items.find((item) => item.id === groupId); if (!found) throw new Error("Class not found"); setGroup(found); } catch (err) { setError(err instanceof Error ? err.message : "Unable to load class"); } finally { setLoading(false); } }
-  async function loadRoster() { try { const result = await apiRequest<{ items: RosterStudent[] }>(`/api/groups/${groupId}/students?page=1&page_size=100`); setRoster(result.items); } catch (err) { setError(err instanceof Error ? err.message : "Unable to load roster"); } }
-  useEffect(() => { void loadGroup(); void loadRoster(); }, [groupId]);
-  function changeTab(next: "roster" | "attendance" | "summary") { setTab(next); const suffix = next === "roster" ? "" : `?tab=${next}`; window.history.replaceState({}, "", `/teacher/groups/${groupId}${suffix}`); }
-  async function archive() { if (!group) return; try { const updated = await apiRequest<Group>(`/api/groups/${group.id}/archive`, { method: "POST" }); setGroup(updated); } catch (err) { setError(err instanceof Error ? err.message : "Unable to archive class"); } }
-  if (loading) return <AppShell><div className="flex min-h-[60vh] items-center justify-center text-sm text-muted-foreground">Loading class…</div></AppShell>;
-  if (!group) return <AppShell><main className="mx-auto max-w-3xl px-5 py-12"><Card><CardContent className="py-12 text-center"><p className="font-medium">{error || "Class not found"}</p><Button className="mt-5" onClick={() => navigate("/teacher")}><ArrowLeft className="size-4" />Back to classes</Button></CardContent></Card></main></AppShell>;
-  return <AppShell navigation={[{ key: "classes", label: "Classes", icon: BookOpen }, { key: "attendance", label: "Attendance", icon: CheckCircle2 }, { key: "summary", label: "Summary", icon: BarChart3 }]} activeKey={tab === "roster" ? "classes" : tab} onNavigate={(key) => key === "classes" ? navigate("/teacher") : changeTab(key as "attendance" | "summary")}><main className="mx-auto max-w-7xl px-4 py-7 sm:px-6 lg:px-10"><button className="mb-6 inline-flex items-center gap-2 text-sm font-medium text-muted-foreground transition hover:text-foreground" onClick={() => navigate("/teacher")}><ArrowLeft className="size-4" />Back to classes</button><div className="mb-7 flex flex-wrap items-end justify-between gap-4"><div><div className="mb-2 flex items-center gap-2 text-sm text-muted-foreground"><BookOpen className="size-4 text-primary" />Class workspace</div><h1 className="text-3xl font-semibold tracking-tight sm:text-4xl">{group.name}</h1><p className="mt-2 text-sm text-muted-foreground">Join code <span className="font-mono font-semibold text-foreground">{group.join_code}</span><button className="ml-2 rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground" title="Copy join code" onClick={() => void navigator.clipboard?.writeText(group.join_code)}><Copy className="inline size-3.5" /></button></p></div><div className="flex gap-2">{!group.archived_at && <Button variant="outline" onClick={() => setEditOpen(true)}><Pencil className="size-4" />Edit name</Button>}{!group.archived_at && <Button variant="outline" onClick={() => setArchiveOpen(true)}><Archive className="size-4" />Archive class</Button>}</div></div><div className="mb-6 flex gap-6 overflow-x-auto border-b"><button onClick={() => changeTab("roster")} className={`relative flex shrink-0 items-center gap-2 pb-3 text-sm font-medium ${tab === "roster" ? "text-foreground" : "text-muted-foreground"}`}><Users className="size-4" />Roster <span className="rounded-full bg-muted px-2 py-0.5 text-xs">{roster.length}</span>{tab === "roster" && <span className="absolute inset-x-0 bottom-0 h-0.5 bg-primary" />}</button><button onClick={() => changeTab("attendance")} className={`relative flex shrink-0 items-center gap-2 pb-3 text-sm font-medium ${tab === "attendance" ? "text-foreground" : "text-muted-foreground"}`}><CheckCircle2 className="size-4" />Attendance{tab === "attendance" && <span className="absolute inset-x-0 bottom-0 h-0.5 bg-primary" />}</button><button onClick={() => changeTab("summary")} className={`relative flex shrink-0 items-center gap-2 pb-3 text-sm font-medium ${tab === "summary" ? "text-foreground" : "text-muted-foreground"}`}><BarChart3 className="size-4" />Summary{tab === "summary" && <span className="absolute inset-x-0 bottom-0 h-0.5 bg-primary" />}</button></div>{error && <div className="mb-6 flex items-center justify-between rounded-lg border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive"><span>{error}</span><button onClick={() => setError("")}><X className="size-4" /></button></div>}{group.archived_at && <div className="mb-6 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">This class is archived. Its history remains available, but roster and attendance changes are disabled.</div>}<div>{tab === "roster" ? <Card><CardContent className="py-6"><RosterManager group={group} roster={roster} onRosterChange={setRoster} onError={setError} /></CardContent></Card> : tab === "attendance" ? <SessionPanel group={group} roster={roster} onError={setError} /> : <GroupSummary group={group} onError={setError} />}</div></main><EditGroupDialog group={group} open={editOpen} onOpenChange={setEditOpen} onUpdated={setGroup} onError={setError} /><ConfirmDialog open={archiveOpen} onOpenChange={setArchiveOpen} title="Archive class?" description={`${group.name} will become read-only, but its attendance history will remain available.`} confirmLabel="Archive class" destructive onConfirm={() => void archive().then(() => setArchiveOpen(false))} /></AppShell>;
+export function TeacherGroupPage({groupId}: { groupId: string }) {
+    const queryTab = new URLSearchParams(window.location.search).get("tab");
+    const [tab, setTab] = useState<"roster" | "attendance" | "summary">(queryTab === "attendance" || queryTab === "summary" ? queryTab : "roster");
+    const [group, setGroup] = useState<Group | null>(null);
+    const [roster, setRoster] = useState<RosterStudent[]>([]);
+    const [archiveOpen, setArchiveOpen] = useState(false);
+    const [editOpen, setEditOpen] = useState(false);
+    const [error, setError] = useState("");
+    const [loading, setLoading] = useState(true);
+
+    async function loadGroup() {
+        try {
+            const result = await apiRequest<{ items: Group[] }>("/api/groups?page=1&page_size=100");
+            const found = result.items.find((item) => item.id === groupId);
+            if (!found) throw new Error("Class not found");
+            setGroup(found);
+        } catch (err) {
+            setError(err instanceof Error ? err.message : "Unable to load class");
+        } finally {
+            setLoading(false);
+        }
+    }
+
+    async function loadRoster() {
+        try {
+            const result = await apiRequest<{
+                items: RosterStudent[]
+            }>(`/api/groups/${groupId}/students?page=1&page_size=100`);
+            setRoster(result.items);
+        } catch (err) {
+            setError(err instanceof Error ? err.message : "Unable to load roster");
+        }
+    }
+
+    useEffect(() => {
+        void loadGroup();
+        void loadRoster();
+    }, [groupId]);
+
+    function changeTab(next: "roster" | "attendance" | "summary") {
+        setTab(next);
+        const suffix = next === "roster" ? "" : `?tab=${next}`;
+        window.history.replaceState({}, "", `/teacher/groups/${groupId}${suffix}`);
+    }
+
+    async function archive() {
+        if (!group) return;
+        try {
+            const updated = await apiRequest<Group>(`/api/groups/${group.id}/archive`, {method: "POST"});
+            setGroup(updated);
+        } catch (err) {
+            setError(err instanceof Error ? err.message : "Unable to archive class");
+        }
+    }
+
+    if (loading) return <AppShell>
+        <div className="flex min-h-[60vh] items-center justify-center text-sm text-muted-foreground">Loading class…
+        </div>
+    </AppShell>;
+    if (!group) return <AppShell>
+        <main className="mx-auto max-w-3xl px-5 py-12"><Card><CardContent className="py-12 text-center"><p
+            className="font-medium">{error || "Class not found"}</p><Button className="mt-5"
+                                                                            onClick={() => navigate("/teacher")}><ArrowLeft
+            className="size-4"/>Back to classes</Button></CardContent></Card></main>
+    </AppShell>;
+    return <AppShell navigation={[{key: "classes", label: "Classes", icon: BookOpen}, {
+        key: "attendance",
+        label: "Attendance",
+        icon: CheckCircle2
+    }, {key: "summary", label: "Summary", icon: BarChart3}]} activeKey={tab === "roster" ? "classes" : tab}
+                     onNavigate={(key) => key === "classes" ? navigate("/teacher") : changeTab(key as "attendance" | "summary")}>
+        <main className="mx-auto max-w-7xl px-4 py-7 sm:px-6 lg:px-10">
+            <button
+                className="mb-6 inline-flex items-center gap-2 text-sm font-medium text-muted-foreground transition hover:text-foreground"
+                onClick={() => navigate("/teacher")}><ArrowLeft className="size-4"/>Back to classes
+            </button>
+            <div className="mb-7 flex flex-wrap items-end justify-between gap-4">
+                <div>
+                    <h1 className="text-3xl font-semibold tracking-tight sm:text-4xl">{group.name}</h1>
+                    <p className="mt-2 text-sm text-muted-foreground">Join code <span
+                        className="font-mono font-semibold text-foreground">{group.join_code}</span>
+                        <button className="ml-2 rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
+                                title="Copy join code"
+                                onClick={() => void navigator.clipboard?.writeText(group.join_code)}><Copy
+                            className="inline size-3.5"/></button>
+                    </p>
+                </div>
+                <div className="flex gap-2">{!group.archived_at &&
+                    <Button variant="outline" onClick={() => setEditOpen(true)}><Pencil className="size-4"/>Edit
+                        name</Button>}{!group.archived_at &&
+                    <Button variant="outline" onClick={() => setArchiveOpen(true)}><Archive className="size-4"/>Archive
+                        class</Button>}</div>
+            </div>
+            <div className="mb-6 flex gap-6 overflow-x-auto border-b">
+                <button onClick={() => changeTab("roster")}
+                        className={`relative flex shrink-0 items-center gap-2 pb-3 text-sm font-medium ${tab === "roster" ? "text-foreground" : "text-muted-foreground"}`}>
+                    <Users className="size-4"/>Roster <span
+                    className="rounded-full bg-muted px-2 py-0.5 text-xs">{roster.length}</span>{tab === "roster" &&
+                    <span className="absolute inset-x-0 bottom-0 h-0.5 bg-primary"/>}</button>
+                <button onClick={() => changeTab("attendance")}
+                        className={`relative flex shrink-0 items-center gap-2 pb-3 text-sm font-medium ${tab === "attendance" ? "text-foreground" : "text-muted-foreground"}`}>
+                    <CheckCircle2 className="size-4"/>Attendance{tab === "attendance" &&
+                    <span className="absolute inset-x-0 bottom-0 h-0.5 bg-primary"/>}</button>
+                <button onClick={() => changeTab("summary")}
+                        className={`relative flex shrink-0 items-center gap-2 pb-3 text-sm font-medium ${tab === "summary" ? "text-foreground" : "text-muted-foreground"}`}>
+                    <BarChart3 className="size-4"/>Summary{tab === "summary" &&
+                    <span className="absolute inset-x-0 bottom-0 h-0.5 bg-primary"/>}</button>
+            </div>
+            {error && <div
+                className="mb-6 flex items-center justify-between rounded-lg border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive">
+                <span>{error}</span>
+                <button onClick={() => setError("")}><X className="size-4"/></button>
+            </div>}{group.archived_at &&
+            <div className="mb-6 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">This
+                class is archived. Its history remains available, but roster and attendance changes are disabled.</div>}
+            <div>{tab === "roster" ? <Card><CardContent className="md:py-6 py-0"><RosterManager group={group} roster={roster}
+                                                                                        onRosterChange={setRoster}
+                                                                                        onError={setError}/></CardContent></Card> : tab === "attendance" ?
+                <SessionPanel group={group} roster={roster} onError={setError}/> :
+                <GroupSummary group={group} onError={setError}/>}</div>
+        </main>
+        <EditGroupDialog group={group} open={editOpen} onOpenChange={setEditOpen} onUpdated={setGroup}
+                         onError={setError}/><ConfirmDialog open={archiveOpen} onOpenChange={setArchiveOpen}
+                                                            title="Archive class?"
+                                                            description={`${group.name} will become read-only, but its attendance history will remain available.`}
+                                                            confirmLabel="Archive class" destructive
+                                                            onConfirm={() => void archive().then(() => setArchiveOpen(false))}/></AppShell>;
 }

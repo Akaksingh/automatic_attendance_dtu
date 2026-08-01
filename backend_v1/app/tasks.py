@@ -196,7 +196,15 @@ def process_import_job(self, import_job_id: UUID) -> dict[str, object]:
                         current.full_name = full_name
                         current.user.full_name = full_name
                         current.user.email = email
+                        password = str(data.get("password") or "").strip()
+                        if password:
+                            if len(password) < 8:
+                                raise ValueError("Password must be at least 8 characters")
+                            current.user.password_hash = hash_password(password)
+                            db.query(RefreshToken).filter(RefreshToken.user_id == current.user_id, RefreshToken.revoked_at.is_(None)).update({RefreshToken.revoked_at: datetime.now(UTC)}, synchronize_session=False)
                         db.commit()
+                        if password:
+                            send_welcome_email_task.delay(current.user.email, current.user.full_name, password)
                         job.succeeded += 1
                     except Exception as exc:
                         db.rollback()
