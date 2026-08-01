@@ -1,4 +1,5 @@
 """Cookie-based JWT authentication and self-service profile routes."""
+import secrets
 from datetime import UTC, datetime, timedelta
 
 from typing import Annotated
@@ -8,7 +9,7 @@ from sqlalchemy.orm import Session
 
 from ..config import settings
 from ..database import get_db
-from ..models import RefreshToken, User, UserRole
+from ..models import AuditLog, RefreshToken, User, UserRole
 from ..schemas import AuthResponse, LoginRequest, ProfileUpdate, StudentRegistration, UserOut
 from ..security import CurrentUser, decode_token, hash_password, make_token, verify_password
 
@@ -33,11 +34,15 @@ def _set_auth_cookies(response: Response, user: User, db: Session) -> None:
     cookie_options = {"httponly": True, "secure": settings.auth_cookie_secure, "samesite": "lax", "path": "/api"}
     response.set_cookie("access_token", access, max_age=settings.jwt_access_token_minutes * 60, **cookie_options)
     response.set_cookie("refresh_token", refresh, max_age=settings.jwt_refresh_token_days * 86400, **cookie_options)
+    # The React app is served from `/`, so the readable double-submit cookie
+    # must be available there. Authentication cookies remain scoped to `/api`.
+    response.set_cookie("csrf_token", secrets.token_urlsafe(32), max_age=settings.jwt_refresh_token_days * 86400, httponly=False, secure=settings.auth_cookie_secure, samesite="lax", path="/")
 
 
 def _clear_auth_cookies(response: Response) -> None:
     response.delete_cookie("access_token", path="/api")
     response.delete_cookie("refresh_token", path="/api")
+    response.delete_cookie("csrf_token", path="/")
 
 
 @router.post("/register", response_model=UserOut, status_code=status.HTTP_201_CREATED)
@@ -79,7 +84,7 @@ def refresh(request: Request, response: Response, db: DbSession) -> dict[str, Us
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Refresh token is no longer valid")
     from uuid import UUID
     user = db.get(User, UUID(payload["sub"]))
-    if user is None or not user.is_active:
+    if user is None or not user.is_active or stored.user_id != user.id:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User is not active")
     stored.revoked_at = now  # rotate on every use
     db.commit()
@@ -119,6 +124,9 @@ def update_profile(payload: ProfileUpdate, user: CurrentUser, db: DbSession) -> 
         if not payload.current_password or not verify_password(payload.current_password, user.password_hash):
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Current password is incorrect")
         user.password_hash = hash_password(payload.new_password)
+        now = datetime.now(UTC)
+        db.query(RefreshToken).filter(RefreshToken.user_id == user.id, RefreshToken.revoked_at.is_(None)).update({RefreshToken.revoked_at: now}, synchronize_session=False)
+        db.add(AuditLog(actor_id=user.id, action="user.password_changed", entity_type="user", entity_id=user.id))
     if payload.full_name is not None and user.role != UserRole.student:
         user.full_name = payload.full_name
     if payload.profile_image_url is not None:

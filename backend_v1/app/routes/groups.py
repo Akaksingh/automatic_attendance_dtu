@@ -6,14 +6,18 @@ from uuid import UUID
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
+from fastapi.responses import Response
 from openpyxl import load_workbook
 from sqlalchemy.orm import Session
 
 from ..database import get_db
-from ..models import AttendanceRecord, ClassSession, Group, GroupMembership, Student, User, UserRole
-from ..schemas import AddStudentRequest, AttendanceOut, GroupCreate, GroupOut, GroupRosterImportOut, GroupRosterResult, GroupUpdate, JoinGroupRequest
+from ..config import settings
+from ..models import AuditLog, AttendanceRecord, ClassSession, Group, GroupMembership, ImportJob, Student, User, UserRole
+from ..schemas import AddStudentRequest, AttendanceOut, AttendancePage, GroupCreate, GroupOut, GroupPage, GroupRosterImportOut, GroupRosterPage, GroupRosterResult, GroupRosterStudentOut, GroupUpdate, ImportJobOut, JoinGroupRequest, PageMeta
 from ..security import CurrentUser, require_roles
+from ..storage import storage
+from ..tasks import process_import_job
 
 router = APIRouter(prefix="/api/groups", tags=["groups"])
 DbSession = Annotated[Session, Depends(get_db)]
@@ -61,19 +65,17 @@ def _add_student_by_roll_no(group: Group, roll_no: str, db: Session) -> User:
     return user
 
 
-@router.get("", response_model=list[GroupOut])
-def list_groups(user: CurrentUser, db: DbSession) -> list[Group]:
+@router.get("", response_model=GroupPage)
+def list_groups(user: CurrentUser, db: DbSession, page: int = Query(1, ge=1), page_size: int = Query(25, ge=1, le=100)) -> GroupPage:
     if user.role == UserRole.admin:
-        return db.query(Group).order_by(Group.created_at.desc()).all()
-    if user.role == UserRole.teacher:
-        return db.query(Group).filter(Group.owner_id == user.id).order_by(Group.created_at.desc()).all()
-    return (
-        db.query(Group)
-        .join(GroupMembership)
-        .filter(GroupMembership.student_id == user.id)
-        .order_by(Group.created_at.desc())
-        .all()
-    )
+        query = db.query(Group).order_by(Group.created_at.desc())
+    elif user.role == UserRole.teacher:
+        query = db.query(Group).filter(Group.owner_id == user.id).order_by(Group.created_at.desc())
+    else:
+        query = db.query(Group).join(GroupMembership).filter(GroupMembership.student_id == user.id).order_by(Group.created_at.desc())
+    total = query.count()
+    items = query.offset((page - 1) * page_size).limit(page_size).all()
+    return GroupPage(items=items, meta=PageMeta(page=page, page_size=page_size, total=total, pages=(total + page_size - 1) // page_size))
 
 
 @router.post("", response_model=GroupOut, status_code=status.HTTP_201_CREATED)
@@ -87,6 +89,7 @@ def create_group(
         join_code = _join_code()
     group = Group(name=payload.name, join_code=join_code, owner_id=user.id)
     db.add(group)
+    db.add(AuditLog(actor_id=user.id, action="group.created", entity_type="group", entity_id=group.id))
     db.commit()
     db.refresh(group)
     return group
@@ -117,6 +120,7 @@ def archive_group(
     if group.archived_at is None:
         from datetime import UTC, datetime
         group.archived_at = datetime.now(UTC)
+        db.add(AuditLog(actor_id=user.id, action="group.archived", entity_type="group", entity_id=group.id))
         db.commit()
         db.refresh(group)
     return group
@@ -129,6 +133,7 @@ def delete_group(
     user: User = Depends(require_roles(UserRole.admin, UserRole.teacher)),
 ) -> None:
     group = _get_manageable_group(group_id, user, db)
+    db.add(AuditLog(actor_id=user.id, action="group.deleted", entity_type="group", entity_id=group.id))
     db.delete(group)
     db.commit()
 
@@ -151,7 +156,42 @@ def add_student_to_group(
     return group
 
 
-@router.post("/{group_id}/students/bulk", response_model=GroupRosterImportOut, status_code=status.HTTP_202_ACCEPTED)
+@router.get("/{group_id}/students", response_model=GroupRosterPage)
+def list_group_students(
+    group_id: UUID,
+    user: CurrentUser,
+    db: DbSession,
+    page: int = Query(1, ge=1),
+    page_size: int = Query(25, ge=1, le=100),
+) -> GroupRosterPage:
+    group = _get_visible_group(group_id, user, db)
+    query = (
+        db.query(GroupMembership, Student, User)
+        .join(Student, Student.user_id == GroupMembership.student_id)
+        .join(User, User.id == Student.user_id)
+        .filter(GroupMembership.group_id == group.id)
+        .order_by(Student.roll_no.asc())
+    )
+    total = query.count()
+    rows = query.offset((page - 1) * page_size).limit(page_size).all()
+    items = [GroupRosterStudentOut(student_id=student.id, user_id=student.user_id, roll_no=student.roll_no, full_name=student.full_name, email=user_row.email, profile_image_url=student.profile_image_url, joined_at=membership.joined_at) for membership, student, user_row in rows]
+    return GroupRosterPage(items=items, meta=PageMeta(page=page, page_size=page_size, total=total, pages=(total + page_size - 1) // page_size))
+
+
+@router.delete("/{group_id}/students/{student_id}", status_code=status.HTTP_204_NO_CONTENT, response_class=Response)
+def remove_student_from_group(group_id: UUID, student_id: UUID, db: DbSession, user: User = Depends(require_roles(UserRole.admin, UserRole.teacher))) -> Response:
+    group = _get_manageable_group(group_id, user, db)
+    _require_active_group(group)
+    membership = db.query(GroupMembership).filter_by(group_id=group.id, student_id=student_id).first()
+    if membership is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Student is not in this group")
+    db.add(AuditLog(actor_id=user.id, action="group.student_removed", entity_type="group_membership", entity_id=membership.id))
+    db.delete(membership)
+    db.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.post("/{group_id}/students/bulk-legacy", response_model=GroupRosterImportOut, status_code=status.HTTP_202_ACCEPTED, include_in_schema=False)
 async def bulk_add_students_to_group(
     group_id: UUID,
     db: DbSession,
@@ -186,6 +226,34 @@ async def bulk_add_students_to_group(
     return GroupRosterImportOut(added=sum(item.status == "added" for item in results), failed=sum(item.status == "failed" for item in results), results=results)
 
 
+@router.post("/{group_id}/students/bulk", response_model=ImportJobOut, status_code=status.HTTP_202_ACCEPTED)
+async def queue_bulk_add_students_to_group(
+    group_id: UUID,
+    db: DbSession,
+    spreadsheet: UploadFile = File(...),
+    user: User = Depends(require_roles(UserRole.admin, UserRole.teacher)),
+) -> ImportJobOut:
+    group = _get_manageable_group(group_id, user, db)
+    _require_active_group(group)
+    if not (spreadsheet.filename or "").lower().endswith((".xlsx", ".xlsm")):
+        raise HTTPException(status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE, detail="Upload an .xlsx or .xlsm Excel file")
+    content = await spreadsheet.read(settings.max_spreadsheet_bytes + 1)
+    if len(content) > settings.max_spreadsheet_bytes:
+        raise HTTPException(status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail="Spreadsheet is too large")
+    key = f"imports/pending/{secrets.token_urlsafe(24)}.xlsx"
+    storage.put_bytes(key, content, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+    try:
+        job = ImportJob(kind="group_roster", created_by_id=user.id, group_id=group.id, spreadsheet_key=key)
+        db.add(job)
+        db.commit()
+        db.refresh(job)
+        process_import_job.delay(job.id)
+        return job
+    except Exception:
+        storage.delete(key)
+        raise
+
+
 @router.post("/join", response_model=GroupOut, status_code=status.HTTP_201_CREATED)
 def join_group(
     payload: JoinGroupRequest,
@@ -202,8 +270,8 @@ def join_group(
     return group
 
 
-@router.get("/{group_id}/attendance", response_model=list[AttendanceOut])
-def group_attendance(group_id: UUID, user: CurrentUser, db: DbSession) -> list[AttendanceOut]:
+@router.get("/{group_id}/attendance", response_model=AttendancePage)
+def group_attendance(group_id: UUID, user: CurrentUser, db: DbSession, page: int = Query(1, ge=1), page_size: int = Query(25, ge=1, le=100)) -> AttendancePage:
     group = _get_visible_group(group_id, user, db)
     query = (
         db.query(AttendanceRecord, ClassSession, Group)
@@ -213,7 +281,10 @@ def group_attendance(group_id: UUID, user: CurrentUser, db: DbSession) -> list[A
     )
     if user.role == UserRole.student:
         query = query.filter(AttendanceRecord.student_id == user.id)
-    return [
+    total = query.count()
+    rows = query.offset((page - 1) * page_size).limit(page_size).all()
+    items = [
         AttendanceOut(session_id=session.id, group_id=group_row.id, group_name=group_row.name, status=record.status, marked_at=record.marked_at)
-        for record, session, group_row in query.order_by(ClassSession.started_at.desc()).all()
+        for record, session, group_row in rows
     ]
+    return AttendancePage(items=items, meta=PageMeta(page=page, page_size=page_size, total=total, pages=(total + page_size - 1) // page_size))

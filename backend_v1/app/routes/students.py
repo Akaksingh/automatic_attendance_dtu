@@ -7,7 +7,8 @@ from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile, status
-from fastapi.responses import FileResponse
+from fastapi.responses import StreamingResponse
+from io import BytesIO
 from sqlalchemy.orm import Session
 
 from ..config import settings
@@ -15,6 +16,7 @@ from ..database import get_db
 from ..models import PhotoProcessingJob, Student, StudentPhoto, User, UserRole
 from ..schemas import PhotoJobOut, StudentOut, StudentPhotoOut
 from ..security import CurrentUser, require_roles
+from ..storage import storage
 from ..tasks import process_student_photo
 
 router = APIRouter(prefix="/api/students", tags=["students"])
@@ -65,10 +67,8 @@ async def upload_profile_photo(
     if len(image_bytes) > settings.max_profile_photo_bytes:
         raise HTTPException(status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail="Profile photo is too large")
     student = _student_for_user(user, db)
-    key = f"pending/{student.id}/{secrets.token_urlsafe(24)}.{file.content_type.split('/')[-1]}"
-    path = Path(settings.profile_photo_dir) / key
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_bytes(image_bytes)
+    key = f"profile/pending/{student.id}/{secrets.token_urlsafe(24)}.{file.content_type.split('/')[-1]}"
+    storage.put_bytes(key, image_bytes, file.content_type)
     job = PhotoProcessingJob(student_id=student.id, storage_key=key, content_type=file.content_type)
     db.add(job)
     db.flush()
@@ -76,7 +76,7 @@ async def upload_profile_photo(
         db.commit()
     except Exception:
         db.rollback()
-        path.unlink(missing_ok=True)
+        storage.delete(key)
         raise
     process_student_photo.delay(job.id)
     db.refresh(job)
@@ -93,7 +93,6 @@ def student_photo_image(photo_id: UUID, user: CurrentUser, db: DbSession):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="You cannot access this photo")
     if photo.storage_key is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Only the latest profile image is retained")
-    path = Path(settings.profile_photo_dir) / photo.storage_key
-    if not path.is_file():
+    if not storage.exists(photo.storage_key):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Photo file not found")
-    return FileResponse(path, media_type=photo.content_type)
+    return StreamingResponse(BytesIO(storage.get_bytes(photo.storage_key)), media_type=photo.content_type)

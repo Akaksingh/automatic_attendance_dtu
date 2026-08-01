@@ -1,0 +1,28 @@
+import { useEffect, useMemo, useState } from "react";
+import { Archive, BookOpen, CheckCircle2, LayoutGrid, Plus, RefreshCw, X } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent } from "@/components/ui/card";
+import { AppShell, type NavigationItem } from "@/components/layout/AppShell";
+import { CreateGroupDialog } from "@/components/teacher/CreateGroupDialog";
+import { GroupCard } from "@/components/teacher/GroupCard";
+import { apiRequest } from "@/lib/api";
+import type { Group } from "@/types/api";
+
+const navigation: NavigationItem[] = [{ key: "classes", label: "Classes", icon: LayoutGrid }, { key: "attendance", label: "Attendance", icon: CheckCircle2 }];
+function navigate(path: string) { window.history.pushState({}, "", path); window.dispatchEvent(new PopStateEvent("popstate")); }
+
+export function TeacherDashboardPage() {
+  const [groups, setGroups] = useState<Group[]>([]); const [tab, setTab] = useState<"active" | "archived">("active"); const [dialogOpen, setDialogOpen] = useState(false); const [error, setError] = useState(""); const [loading, setLoading] = useState(true);
+  const activeGroups = useMemo(() => groups.filter((group) => !group.archived_at), [groups]); const archivedGroups = useMemo(() => groups.filter((group) => Boolean(group.archived_at)), [groups]); const visibleGroups = tab === "active" ? activeGroups : archivedGroups;
+  async function loadGroups() { setLoading(true); try { const result = await apiRequest<{ items: Group[] }>("/api/groups?page=1&page_size=100"); setGroups(result.items); } catch (err) { setError(err instanceof Error ? err.message : "Unable to load classes"); } finally { setLoading(false); } }
+  useEffect(() => { void loadGroups(); }, []);
+  async function archive(group: Group) { if (!window.confirm(`Archive ${group.name}? It will become read-only.`)) return; try { const updated = await apiRequest<Group>(`/api/groups/${group.id}/archive`, { method: "POST" }); setGroups((current) => current.map((item) => item.id === updated.id ? updated : item)); setTab("archived"); } catch (err) { setError(err instanceof Error ? err.message : "Unable to archive class"); } }
+  function handleNavigation(key: string) { if (key === "attendance" && activeGroups[0]) navigate(`/teacher/groups/${activeGroups[0].id}?tab=attendance`); else navigate("/teacher"); }
+  return <AppShell navigation={navigation} activeKey="classes" onNavigate={handleNavigation}><main className="mx-auto max-w-7xl px-5 py-8 sm:px-8"><div className="mb-8 flex flex-wrap items-end justify-between gap-4"><div><div className="flex items-center gap-2 text-sm font-semibold text-[#536575]"><BookOpen className="size-4" />Teacher workspace</div><h1 className="mt-2 text-3xl font-semibold tracking-tight text-slate-950 dark:text-white">Your classes</h1><p className="mt-2 text-muted-foreground">Open a class to manage its roster and attendance.</p></div><div className="flex gap-2"><Button variant="outline" onClick={() => void loadGroups()}><RefreshCw className="size-4" />Refresh</Button><Button className="bg-[#3f5364] hover:bg-[#303f4c]" onClick={() => setDialogOpen(true)}><Plus className="size-4" />Create class</Button></div></div>
+    {error && <div className="mb-6 flex items-center justify-between rounded-xl border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive"><span>{error}</span><button onClick={() => setError("")}><X className="size-4" /></button></div>}
+    <div className="mb-7 border-b"><div className="flex gap-7"><button onClick={() => setTab("active")} className={`relative pb-3 text-sm font-semibold ${tab === "active" ? "text-[#536575]" : "text-muted-foreground"}`}>Active <span className="ml-1 rounded-full bg-muted px-2 py-0.5 text-xs">{activeGroups.length}</span>{tab === "active" && <span className="absolute inset-x-0 bottom-0 h-0.5 bg-[#536575]" />}</button><button onClick={() => setTab("archived")} className={`relative pb-3 text-sm font-semibold ${tab === "archived" ? "text-[#536575]" : "text-muted-foreground"}`}>Archived <span className="ml-1 rounded-full bg-muted px-2 py-0.5 text-xs">{archivedGroups.length}</span>{tab === "archived" && <span className="absolute inset-x-0 bottom-0 h-0.5 bg-[#536575]" />}</button></div></div>
+    {loading ? <div className="py-20 text-center text-sm text-muted-foreground">Loading your classes…</div> : visibleGroups.length === 0 ? <EmptyState archived={tab === "archived"} onCreate={() => setDialogOpen(true)} /> : <div className="grid gap-5 sm:grid-cols-2 xl:grid-cols-3">{visibleGroups.map((group) => <GroupCard key={group.id} group={group} onOpen={() => navigate(`/teacher/groups/${group.id}`)} onArchive={() => void archive(group)} />)}</div>}
+    </main><CreateGroupDialog open={dialogOpen} onOpenChange={setDialogOpen} onCreated={(group) => { setGroups((current) => [group, ...current]); navigate(`/teacher/groups/${group.id}`); }} onError={setError} /></AppShell>;
+}
+
+function EmptyState({ archived, onCreate }: { archived: boolean; onCreate: () => void }) { return <Card className="border-dashed"><CardContent className="flex flex-col items-center justify-center py-20 text-center"><div className="mb-4 flex size-14 items-center justify-center rounded-2xl bg-slate-100 text-[#536575]"><Archive className="size-6" /></div><h2 className="text-lg font-semibold">{archived ? "No archived classes" : "Create your first class"}</h2><p className="mt-2 max-w-sm text-sm text-muted-foreground">{archived ? "Classes you archive will appear here." : "Create a class, add your students, and start taking attendance."}</p>{!archived && <Button className="mt-5 bg-[#3f5364] hover:bg-[#303f4c]" onClick={onCreate}><Plus className="size-4" />Create class</Button>}</CardContent></Card>; }

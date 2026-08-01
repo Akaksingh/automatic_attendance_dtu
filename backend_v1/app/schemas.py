@@ -64,6 +64,18 @@ class GroupOut(BaseModel):
     created_at: datetime
 
 
+class PageMeta(BaseModel):
+    page: int
+    page_size: int
+    total: int
+    pages: int
+
+
+class GroupPage(BaseModel):
+    items: list[GroupOut]
+    meta: PageMeta
+
+
 class JoinGroupRequest(BaseModel):
     join_code: str = Field(min_length=4, max_length=16)
 
@@ -86,12 +98,32 @@ class GroupRosterImportOut(BaseModel):
     results: list[GroupRosterResult]
 
 
+class GroupRosterStudentOut(BaseModel):
+    student_id: UUID
+    user_id: UUID
+    roll_no: str
+    full_name: str
+    email: EmailStr
+    profile_image_url: str | None
+    joined_at: datetime
+
+
+class GroupRosterPage(BaseModel):
+    items: list[GroupRosterStudentOut]
+    meta: PageMeta
+
+
 class AttendanceOut(BaseModel):
     session_id: UUID
     group_id: UUID
     group_name: str
     status: AttendanceStatus
     marked_at: datetime
+
+
+class AttendancePage(BaseModel):
+    items: list[AttendanceOut]
+    meta: PageMeta
 
 
 class SessionPhotoOut(BaseModel):
@@ -118,8 +150,16 @@ class SessionOut(BaseModel):
     state: SessionState
     started_at: datetime
     finalized_at: datetime | None
+    processing_total: int
+    processing_completed: int
+    processing_message: str | None
     photos: list[SessionPhotoOut]
     attendance: list[SessionAttendanceOut]
+
+
+class SessionPage(BaseModel):
+    items: list[SessionOut]
+    meta: PageMeta
 
 
 class AttendanceStatusUpdate(BaseModel):
@@ -155,6 +195,26 @@ class StudentOut(BaseModel):
     profile_image_url: str | None
     photo_count: int
     photos: list[StudentPhotoOut]
+
+
+class StudentPage(BaseModel):
+    items: list[StudentOut]
+    meta: PageMeta
+
+
+class ImportJobOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: UUID
+    kind: str
+    status: str
+    total: int
+    processed: int
+    succeeded: int
+    failed: int
+    error: str | None
+    error_file_url: str | None = None
+    created_at: datetime
+    completed_at: datetime | None
 
 
 class StudentProvisionOut(BaseModel):

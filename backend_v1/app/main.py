@@ -8,9 +8,9 @@ from fastapi.staticfiles import StaticFiles
 from sqlalchemy import text
 
 from .database import engine
-from .middleware import authentication_context, security_headers
+from .middleware import authentication_context, csrf_protection, security_headers
 from .redis_client import redis_client
-from .routes import admin, auth, groups, sessions, students
+from .routes import admin, auth, groups, imports, sessions, students
 from .models import User, UserRole
 from .security import hash_password
 from .config import settings
@@ -18,12 +18,14 @@ from .config import settings
 app = FastAPI(title="ClassLens API", version="0.1.0")
 app.add_middleware(CORSMiddleware, allow_origins=settings.cors_origin_list, allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 app.middleware("http")(security_headers)
+app.middleware("http")(csrf_protection)
 app.middleware("http")(authentication_context)
 app.include_router(auth.router)
 app.include_router(admin.router)
 app.include_router(groups.router)
 app.include_router(students.router)
 app.include_router(sessions.router)
+app.include_router(imports.router)
 
 
 @app.on_event("startup")

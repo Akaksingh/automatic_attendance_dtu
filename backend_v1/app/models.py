@@ -89,6 +89,34 @@ class PhotoJobStatus(StrEnum):
     failed = "failed"
 
 
+class ImportJobStatus(StrEnum):
+    pending = "pending"
+    processing = "processing"
+    completed = "completed"
+    failed = "failed"
+
+
+class ImportJob(Base):
+    """Durable asynchronous Excel/ZIP import and error-report job."""
+    __tablename__ = "import_jobs"
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    kind: Mapped[str] = mapped_column(String(64), index=True)
+    status: Mapped[ImportJobStatus] = mapped_column(Enum(ImportJobStatus), default=ImportJobStatus.pending, index=True)
+    created_by_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"), index=True)
+    group_id: Mapped[UUID | None] = mapped_column(ForeignKey("groups.id", ondelete="CASCADE"), nullable=True, index=True)
+    spreadsheet_key: Mapped[str] = mapped_column(String(512))
+    images_zip_key: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    error_file_key: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    total: Mapped[int] = mapped_column(default=0, nullable=False)
+    processed: Mapped[int] = mapped_column(default=0, nullable=False)
+    succeeded: Mapped[int] = mapped_column(default=0, nullable=False)
+    failed: Mapped[int] = mapped_column(default=0, nullable=False)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
 class PhotoProcessingJob(Base):
     """Durable queue record for asynchronous face verification."""
     __tablename__ = "photo_processing_jobs"
@@ -146,6 +174,9 @@ class ClassSession(Base):
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     state: Mapped[SessionState] = mapped_column(Enum(SessionState), default=SessionState.created, index=True)
     finalized_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    processing_total: Mapped[int] = mapped_column(default=0, nullable=False)
+    processing_completed: Mapped[int] = mapped_column(default=0, nullable=False)
+    processing_message: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
     group: Mapped[Group] = relationship(back_populates="sessions")
     created_by: Mapped[User] = relationship(back_populates="created_sessions", foreign_keys=[created_by_id])
@@ -194,3 +225,16 @@ class RefreshToken(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     user: Mapped[User] = relationship(back_populates="refresh_tokens")
+
+
+class AuditLog(Base):
+    """Immutable record of security-sensitive administrative actions."""
+    __tablename__ = "audit_logs"
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    actor_id: Mapped[UUID | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), index=True, nullable=True)
+    action: Mapped[str] = mapped_column(String(100), index=True)
+    entity_type: Mapped[str] = mapped_column(String(100))
+    entity_id: Mapped[UUID | None] = mapped_column(Uuid, nullable=True, index=True)
+    metadata_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)

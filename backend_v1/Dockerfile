@@ -22,6 +22,9 @@ COPY backend_v1/alembic.ini ./alembic.ini
 COPY backend_v1/alembic ./alembic
 COPY --from=frontend-build /frontend/dist /app/frontend
 
+# Mount persistent storage at /app/data in deployment environments.
+VOLUME ["/app/data"]
+
 EXPOSE 8000
 
 CMD ["sh", "-c", "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000"]

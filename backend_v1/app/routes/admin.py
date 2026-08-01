@@ -6,25 +6,28 @@ from typing import Annotated
 from zipfile import BadZipFile, ZipFile
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
 from openpyxl import load_workbook
 from pydantic import EmailStr, TypeAdapter, ValidationError
 from sqlalchemy.orm import Session
 
 from ..config import settings
 from ..database import get_db
-from ..models import PhotoProcessingJob, Student, User, UserRole
+from ..models import ImportJob, PhotoProcessingJob, Student, User, UserRole
 from ..schemas import (
     BulkStudentImportOut,
     BulkStudentResult,
     PhotoJobOut,
     StudentOut,
+    StudentPage,
+    ImportJobOut,
     StudentProvisionOut,
     TeacherCreate,
     UserOut,
 )
 from ..security import hash_password, require_roles
-from ..tasks import process_student_photo
+from ..tasks import process_import_job, process_student_photo, send_welcome_email_task
+from ..storage import storage
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
 DbSession = Annotated[Session, Depends(get_db)]
@@ -32,7 +35,8 @@ email_adapter = TypeAdapter(EmailStr)
 
 
 def _temporary_password() -> str:
-    return f"ClassLens-{secrets.token_urlsafe(9)}"
+    alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789"
+    return "".join(secrets.choice(alphabet) for _ in range(10))
 
 
 def _stage_photo(student_id: UUID, file_name: str, content_type: str, content: bytes, db: Session) -> PhotoProcessingJob:
@@ -44,10 +48,8 @@ def _stage_photo(student_id: UUID, file_name: str, content_type: str, content: b
     suffix = Path(file_name).suffix.lower() or allowed[content_type]
     if suffix not in {".jpg", ".jpeg", ".png", ".webp"}:
         suffix = allowed[content_type]
-    key = f"pending/{student_id}/{secrets.token_urlsafe(24)}{suffix}"
-    path = Path(settings.profile_photo_dir) / key
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_bytes(content)
+    key = f"profile/pending/{student_id}/{secrets.token_urlsafe(24)}{suffix}"
+    storage.put_bytes(key, content, content_type)
     job = PhotoProcessingJob(student_id=student_id, storage_key=key, content_type=content_type)
     db.add(job)
     return job
@@ -104,6 +106,19 @@ def create_teacher(
     return teacher
 
 
+@router.get("/students", response_model=StudentPage)
+def list_students(
+    db: DbSession,
+    _: User = Depends(require_roles(UserRole.admin)),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(25, ge=1, le=100),
+) -> StudentPage:
+    query = db.query(Student).order_by(Student.roll_no.asc())
+    total = query.count()
+    students = query.offset((page - 1) * page_size).limit(page_size).all()
+    return StudentPage(items=[_student_out(student) for student in students], meta={"page": page, "page_size": page_size, "total": total, "pages": (total + page_size - 1) // page_size})
+
+
 @router.post("/students", response_model=StudentProvisionOut, status_code=status.HTTP_201_CREATED)
 async def create_student(
     db: DbSession,
@@ -114,7 +129,7 @@ async def create_student(
     file: UploadFile | None = File(None),
     _: User = Depends(require_roles(UserRole.admin)),
 ) -> StudentProvisionOut:
-    temporary_password = password or _temporary_password()
+    temporary_password = _temporary_password()
     job = None
     try:
         student = _create_student(db, email=email, full_name=full_name, roll_no=roll_no, password=temporary_password)
@@ -128,11 +143,12 @@ async def create_student(
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
     if job:
         process_student_photo.delay(job.id)
+    send_welcome_email_task.delay(student.user.email, student.full_name, temporary_password)
     db.refresh(student)
-    return StudentProvisionOut(student=_student_out(student), photo_job=PhotoJobOut.model_validate(job) if job else None, temporary_password=temporary_password if password is None else None)
+    return StudentProvisionOut(student=_student_out(student), photo_job=PhotoJobOut.model_validate(job) if job else None, temporary_password=temporary_password)
 
 
-@router.post("/students/bulk", response_model=BulkStudentImportOut, status_code=status.HTTP_202_ACCEPTED)
+@router.post("/students/bulk-legacy", response_model=BulkStudentImportOut, status_code=status.HTTP_202_ACCEPTED, include_in_schema=False)
 async def bulk_create_students(
     db: DbSession,
     spreadsheet: UploadFile = File(...),
@@ -144,13 +160,20 @@ async def bulk_create_students(
     image_entries: dict[str, tuple[str, bytes]] = {}
     if images_zip is not None:
         try:
-            with ZipFile(BytesIO(await images_zip.read())) as archive:
+            zip_content = await images_zip.read(settings.max_bulk_zip_bytes + 1)
+            if len(zip_content) > settings.max_bulk_zip_bytes:
+                raise HTTPException(status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail="images_zip is too large")
+            with ZipFile(BytesIO(zip_content)) as archive:
+                if len(archive.infolist()) > settings.max_bulk_zip_files:
+                    raise HTTPException(status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail="images_zip contains too many files")
                 for info in archive.infolist():
                     if info.is_dir():
                         continue
                     normalized = info.filename.replace("\\", "/").lstrip("./")
                     if ".." in Path(normalized).parts:
                         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Image ZIP contains an unsafe path")
+                    if info.file_size > settings.max_profile_photo_bytes:
+                        continue
                     image_entries[normalized.lower()] = (Path(normalized).name, archive.read(info))
         except BadZipFile as exc:
             raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="images_zip is not a valid ZIP archive") from exc
@@ -200,6 +223,54 @@ async def bulk_create_students(
             results.append(BulkStudentResult(row=row_number, email=email or None, roll_no=roll_no or None, status="failed", error=str(exc.detail if isinstance(exc, HTTPException) else exc)))
     workbook.close()
     return BulkStudentImportOut(created=sum(result.status == "created" for result in results), failed=sum(result.status == "failed" for result in results), results=results)
+
+
+async def _stage_import(db: Session, *, actor_id: UUID, kind: str, spreadsheet: UploadFile, images_zip: UploadFile | None = None, group_id: UUID | None = None) -> ImportJob:
+    if not (spreadsheet.filename or "").lower().endswith((".xlsx", ".xlsm")):
+        raise HTTPException(status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE, detail="Upload an .xlsx or .xlsm Excel file")
+    spreadsheet_bytes = await spreadsheet.read(settings.max_spreadsheet_bytes + 1)
+    if len(spreadsheet_bytes) > settings.max_spreadsheet_bytes:
+        raise HTTPException(status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail="Spreadsheet is too large")
+    spreadsheet_key = f"imports/pending/{secrets.token_urlsafe(24)}.xlsx"
+    storage.put_bytes(spreadsheet_key, spreadsheet_bytes, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+    zip_key = None
+    try:
+        if images_zip is not None:
+            content = await images_zip.read(settings.max_bulk_zip_bytes + 1)
+            if len(content) > settings.max_bulk_zip_bytes:
+                raise HTTPException(status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail="images_zip is too large")
+            zip_key = f"imports/pending/{secrets.token_urlsafe(24)}.zip"
+            storage.put_bytes(zip_key, content, "application/zip")
+        job = ImportJob(kind=kind, created_by_id=actor_id, group_id=group_id, spreadsheet_key=spreadsheet_key, images_zip_key=zip_key)
+        db.add(job)
+        db.commit()
+        db.refresh(job)
+        process_import_job.delay(job.id)
+        return job
+    except Exception:
+        storage.delete(spreadsheet_key)
+        if zip_key:
+            storage.delete(zip_key)
+        raise
+
+
+@router.post("/students/bulk", response_model=ImportJobOut, status_code=status.HTTP_202_ACCEPTED)
+async def queue_bulk_student_creation(
+    db: DbSession,
+    spreadsheet: UploadFile = File(...),
+    images_zip: UploadFile | None = File(None),
+    user: User = Depends(require_roles(UserRole.admin)),
+) -> ImportJobOut:
+    return await _stage_import(db, actor_id=user.id, kind="student_create", spreadsheet=spreadsheet, images_zip=images_zip)
+
+
+@router.post("/students/bulk-update", response_model=ImportJobOut, status_code=status.HTTP_202_ACCEPTED)
+async def queue_bulk_student_update(
+    db: DbSession,
+    spreadsheet: UploadFile = File(...),
+    user: User = Depends(require_roles(UserRole.admin)),
+) -> ImportJobOut:
+    return await _stage_import(db, actor_id=user.id, kind="student_update", spreadsheet=spreadsheet)
 
 
 @router.get("/photo-jobs/{job_id}", response_model=PhotoJobOut)

@@ -1,18 +1,22 @@
 """Class-session lifecycle, classroom image review, and attendance correction."""
+from __future__ import annotations
+
 from datetime import UTC, datetime, timedelta
+from io import BytesIO
 from pathlib import Path
 from typing import Annotated
 from uuid import UUID, uuid4
 
-from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile, status
-from fastapi.responses import FileResponse
+from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile, status
+from fastapi.responses import Response, StreamingResponse
 from sqlalchemy.orm import Session
 
 from ..config import settings
 from ..database import get_db
-from ..models import AttendanceRecord, AttendanceStatus, ClassSession, Group, GroupMembership, SessionPhoto, SessionState, User, UserRole
-from ..schemas import AttendanceStatusUpdate, SessionAttendanceOut, SessionOut, SessionPhotoOut
+from ..models import AuditLog, AttendanceRecord, AttendanceStatus, ClassSession, Group, GroupMembership, SessionPhoto, SessionState, User, UserRole
+from ..schemas import AttendanceStatusUpdate, PageMeta, SessionAttendanceOut, SessionOut, SessionPage, SessionPhotoOut
 from ..security import CurrentUser, require_roles
+from ..storage import storage
 from ..tasks import expire_session_photo, process_class_session
 
 router = APIRouter(prefix="/api", tags=["sessions"])
@@ -51,6 +55,9 @@ def _to_out(session: ClassSession, request: Request, user: User, db: Session) ->
         state=session.state,
         started_at=session.started_at,
         finalized_at=session.finalized_at,
+        processing_total=session.processing_total,
+        processing_completed=session.processing_completed,
+        processing_message=session.processing_message,
         photos=[SessionPhotoOut(id=photo.id, image_url=_photo_url(request, photo.id), expires_at=photo.expires_at, processed_at=photo.processed_at, error=photo.error, created_at=photo.created_at) for photo in session.photos],
         attendance=[SessionAttendanceOut(id=record.id, student_id=record.student_id, status=record.status, marked_at=record.marked_at) for record in attendance],
     )
@@ -77,8 +84,8 @@ def create_session(
     return _to_out(session, request, user, db)
 
 
-@router.get("/groups/{group_id}/sessions", response_model=list[SessionOut])
-def list_sessions(group_id: UUID, request: Request, db: DbSession, user: CurrentUser) -> list[SessionOut]:
+@router.get("/groups/{group_id}/sessions", response_model=SessionPage)
+def list_sessions(group_id: UUID, request: Request, db: DbSession, user: CurrentUser, page: int = Query(1, ge=1), page_size: int = Query(25, ge=1, le=100)) -> SessionPage:
     group = db.get(Group, group_id)
     if group is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Group not found")
@@ -90,8 +97,10 @@ def list_sessions(group_id: UUID, request: Request, db: DbSession, user: Current
         pass
     else:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="You cannot access these sessions")
-    sessions = db.query(ClassSession).filter(ClassSession.group_id == group_id).order_by(ClassSession.started_at.desc()).all()
-    return [_to_out(session, request, user, db) for session in sessions]
+    query = db.query(ClassSession).filter(ClassSession.group_id == group_id).order_by(ClassSession.started_at.desc())
+    total = query.count()
+    sessions = query.offset((page - 1) * page_size).limit(page_size).all()
+    return SessionPage(items=[_to_out(session, request, user, db) for session in sessions], meta=PageMeta(page=page, page_size=page_size, total=total, pages=(total + page_size - 1) // page_size))
 
 
 @router.post("/sessions/{session_id}/photos", response_model=SessionOut, status_code=status.HTTP_202_ACCEPTED)
@@ -109,7 +118,9 @@ async def upload_session_photos(
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Finalized sessions cannot be changed")
     if not files:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Upload at least one classroom image")
-    staged: list[Path] = []
+    if len(files) > settings.max_session_photos:
+        raise HTTPException(status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail=f"Upload at most {settings.max_session_photos} classroom images")
+    staged: list[str] = []
     try:
         expires_at = datetime.now(UTC) + timedelta(days=settings.session_photo_retention_days)
         for file in files:
@@ -119,22 +130,30 @@ async def upload_session_photos(
             if len(content) > settings.max_profile_photo_bytes:
                 raise HTTPException(status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail="Classroom image is too large")
             key = f"{session.id}/{uuid4()}{Path(file.filename or '').suffix.lower() or '.jpg'}"
-            path = Path(settings.session_photo_dir) / key
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_bytes(content)
-            staged.append(path)
+            key = f"sessions/{key}"
+            storage.put_bytes(key, content, file.content_type)
+            staged.append(key)
             db.add(SessionPhoto(session_id=session.id, storage_key=key, content_type=file.content_type, expires_at=expires_at))
         session.state = SessionState.processing
         db.commit()
     except Exception:
         db.rollback()
-        for path in staged:
-            path.unlink(missing_ok=True)
+        for key in staged:
+            storage.delete(key)
         raise
     db.refresh(session)
     process_class_session.delay(session.id)
     for photo in session.photos:
         expire_session_photo.apply_async(args=[photo.id], countdown=settings.session_photo_retention_days * 86400)
+    return _to_out(session, request, user, db)
+
+
+@router.get("/sessions/{session_id}/progress", response_model=SessionOut)
+def session_progress(session_id: UUID, request: Request, db: DbSession, user: CurrentUser) -> SessionOut:
+    """Polling endpoint for worker progress; the same data is also in GET /sessions/{id}."""
+    session = _get_session(session_id, db)
+    if not _authorized(session, user, db):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="You cannot access this session")
     return _to_out(session, request, user, db)
 
 
@@ -154,10 +173,9 @@ def session_photo_image(photo_id: UUID, user: CurrentUser, db: DbSession):
     session = _get_session(photo.session_id, db)
     if not _authorized(session, user, db):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="You cannot access this image")
-    path = Path(settings.session_photo_dir) / photo.storage_key
-    if not path.is_file():
+    if not storage.exists(photo.storage_key):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session image is unavailable")
-    return FileResponse(path, media_type=photo.content_type)
+    return StreamingResponse(BytesIO(storage.get_bytes(photo.storage_key)), media_type=photo.content_type)
 
 
 @router.patch("/sessions/{session_id}/attendance/{student_id}", response_model=SessionAttendanceOut)
@@ -182,6 +200,7 @@ def update_attendance(
     else:
         record.status = payload.status
         record.marked_at = datetime.now(UTC)
+    db.add(AuditLog(actor_id=user.id, action="attendance.updated", entity_type="attendance_record", entity_id=record.id))
     db.commit()
     db.refresh(record)
     return record
@@ -196,17 +215,20 @@ def finalize_session(session_id: UUID, request: Request, db: DbSession, user: Us
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Session must finish processing before finalization")
     session.state = SessionState.finalized
     session.finalized_at = datetime.now(UTC)
+    db.add(AuditLog(actor_id=user.id, action="session.finalized", entity_type="class_session", entity_id=session.id))
     db.commit()
     db.refresh(session)
     return _to_out(session, request, user, db)
 
 
-@router.delete("/sessions/{session_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_session(session_id: UUID, db: DbSession, user: User = Depends(require_roles(UserRole.admin, UserRole.teacher))) -> None:
+@router.delete("/sessions/{session_id}", status_code=status.HTTP_204_NO_CONTENT, response_class=Response)
+def delete_session(session_id: UUID, db: DbSession, user: User = Depends(require_roles(UserRole.admin, UserRole.teacher))) -> Response:
     session = _get_session(session_id, db)
     if not _staff_can_manage(session, user):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="You cannot delete this session")
     for photo in session.photos:
-        (Path(settings.session_photo_dir) / photo.storage_key).unlink(missing_ok=True)
+        storage.delete(photo.storage_key)
+    db.add(AuditLog(actor_id=user.id, action="session.deleted", entity_type="class_session", entity_id=session.id))
     db.delete(session)
     db.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
