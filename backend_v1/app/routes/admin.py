@@ -2,6 +2,7 @@
 from io import BytesIO
 from pathlib import Path
 import secrets
+from datetime import UTC, datetime
 from typing import Annotated
 from zipfile import BadZipFile, ZipFile
 from uuid import UUID
@@ -9,12 +10,14 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
 from openpyxl import load_workbook
 from pydantic import EmailStr, TypeAdapter, ValidationError
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from ..config import settings
 from ..database import get_db
-from ..models import ImportJob, PhotoProcessingJob, Student, User, UserRole
+from ..models import AuditLog, ImportJob, PhotoProcessingJob, RefreshToken, Student, User, UserRole
 from ..schemas import (
+    AdminStudentUpdate,
     BulkStudentImportOut,
     BulkStudentResult,
     PhotoJobOut,
@@ -23,6 +26,7 @@ from ..schemas import (
     ImportJobOut,
     StudentProvisionOut,
     TeacherCreate,
+    UserPage,
     UserOut,
 )
 from ..security import hash_password, require_roles
@@ -104,6 +108,124 @@ def create_teacher(
     db.commit()
     db.refresh(teacher)
     return teacher
+
+
+@router.post("/users/{user_id}/reset-password", response_model=UserOut)
+def reset_user_password(
+    user_id: UUID,
+    db: DbSession,
+    admin: User = Depends(require_roles(UserRole.admin)),
+) -> User:
+    target = db.get(User, user_id)
+    if target is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+    temporary_password = _temporary_password()
+    target.password_hash = hash_password(temporary_password)
+    now = datetime.now(UTC)
+    db.query(RefreshToken).filter(
+        RefreshToken.user_id == target.id,
+        RefreshToken.revoked_at.is_(None),
+    ).update({RefreshToken.revoked_at: now}, synchronize_session=False)
+    db.add(AuditLog(actor_id=admin.id, action="user.password_reset", entity_type="user", entity_id=target.id))
+    db.commit()
+    send_welcome_email_task.delay(target.email, target.full_name, temporary_password)
+    db.refresh(target)
+    return target
+
+
+@router.post("/users/{user_id}/disable", response_model=UserOut)
+def disable_user(
+    user_id: UUID,
+    db: DbSession,
+    admin: User = Depends(require_roles(UserRole.admin)),
+) -> User:
+    target = db.get(User, user_id)
+    if target is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+    if target.id == admin.id:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="You cannot disable your own account")
+    target.is_active = False
+    now = datetime.now(UTC)
+    db.query(RefreshToken).filter(
+        RefreshToken.user_id == target.id,
+        RefreshToken.revoked_at.is_(None),
+    ).update({RefreshToken.revoked_at: now}, synchronize_session=False)
+    db.add(AuditLog(actor_id=admin.id, action="user.disabled", entity_type="user", entity_id=target.id))
+    db.commit()
+    db.refresh(target)
+    return target
+
+
+@router.post("/users/{user_id}/enable", response_model=UserOut)
+def enable_user(
+    user_id: UUID,
+    db: DbSession,
+    admin: User = Depends(require_roles(UserRole.admin)),
+) -> User:
+    target = db.get(User, user_id)
+    if target is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+    target.is_active = True
+    db.add(AuditLog(actor_id=admin.id, action="user.enabled", entity_type="user", entity_id=target.id))
+    db.commit()
+    db.refresh(target)
+    return target
+
+
+@router.get("/users", response_model=UserPage)
+def list_users(
+    db: DbSession,
+    _: User = Depends(require_roles(UserRole.admin)),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(25, ge=1, le=100),
+    role: UserRole | None = Query(None),
+    search: str | None = Query(None, max_length=100),
+) -> UserPage:
+    query = db.query(User).outerjoin(Student, Student.user_id == User.id).order_by(User.created_at.desc())
+    if role is not None:
+        query = query.filter(User.role == role)
+    if search and search.strip():
+        term = f"%{search.strip()}%"
+        query = query.filter(or_(User.email.ilike(term), User.full_name.ilike(term), Student.roll_no.ilike(term)))
+    total = query.count()
+    users = query.offset((page - 1) * page_size).limit(page_size).all()
+    items = []
+    for item in users:
+        output = UserOut.model_validate(item)
+        student = db.query(Student).filter(Student.user_id == item.id).first()
+        output.roll_no = student.roll_no if student else None
+        items.append(output)
+    return UserPage(items=items, meta={"page": page, "page_size": page_size, "total": total, "pages": (total + page_size - 1) // page_size})
+
+
+@router.patch("/students/{user_id}", response_model=UserOut)
+def update_student_details(
+    user_id: UUID,
+    payload: AdminStudentUpdate,
+    db: DbSession,
+    admin: User = Depends(require_roles(UserRole.admin)),
+) -> User:
+    target = db.get(User, user_id)
+    student = db.query(Student).filter(Student.user_id == user_id).first()
+    if target is None or student is None or target.role != UserRole.student:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Student not found")
+    email = str(payload.email).strip().lower()
+    duplicate_email = db.query(User).filter(User.email == email, User.id != target.id).first()
+    if duplicate_email:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Email is already registered")
+    duplicate_roll = db.query(Student).filter(Student.roll_no == payload.roll_no.strip(), Student.id != student.id).first()
+    if duplicate_roll:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Roll number is already registered")
+    target.email = email
+    target.full_name = payload.full_name.strip()
+    student.full_name = payload.full_name.strip()
+    student.roll_no = payload.roll_no.strip()
+    db.add(AuditLog(actor_id=admin.id, action="student.details_updated", entity_type="user", entity_id=target.id))
+    db.commit()
+    db.refresh(target)
+    output = UserOut.model_validate(target)
+    output.roll_no = student.roll_no
+    return output
 
 
 @router.get("/students", response_model=StudentPage)
@@ -262,6 +384,15 @@ async def queue_bulk_student_creation(
     user: User = Depends(require_roles(UserRole.admin)),
 ) -> ImportJobOut:
     return await _stage_import(db, actor_id=user.id, kind="student_create", spreadsheet=spreadsheet, images_zip=images_zip)
+
+
+@router.post("/teachers/bulk", response_model=ImportJobOut, status_code=status.HTTP_202_ACCEPTED)
+async def queue_bulk_teacher_creation(
+    db: DbSession,
+    spreadsheet: UploadFile = File(...),
+    user: User = Depends(require_roles(UserRole.admin)),
+) -> ImportJobOut:
+    return await _stage_import(db, actor_id=user.id, kind="teacher_create", spreadsheet=spreadsheet)
 
 
 @router.post("/students/bulk-update", response_model=ImportJobOut, status_code=status.HTTP_202_ACCEPTED)

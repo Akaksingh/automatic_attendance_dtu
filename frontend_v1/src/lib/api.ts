@@ -10,3 +10,31 @@ export async function apiRequest<T>(path: string, options: RequestInit = {}): Pr
   }
   return response.status === 204 ? (undefined as T) : response.json();
 }
+
+export function mediaUrl(value: string): string {
+  try {
+    const url = new URL(value, window.location.origin);
+    return `${url.pathname}${url.search}`;
+  } catch {
+    return value;
+  }
+}
+
+export async function downloadFile(path: string, fallbackName: string): Promise<void> {
+  const response = await fetch(path, { credentials: "include" });
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({}));
+    throw new Error(body.detail ?? "Unable to download file");
+  }
+  const blob = await response.blob();
+  const disposition = response.headers.get("Content-Disposition");
+  const filename = disposition?.match(/filename="?([^";]+)"?/i)?.[1] ?? fallbackName;
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = filename;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(url);
+}

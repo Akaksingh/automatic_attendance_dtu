@@ -14,6 +14,8 @@ class UserOut(BaseModel):
     full_name: str
     role: UserRole
     profile_image_url: str | None
+    is_active: bool
+    roll_no: str | None = None
 
 
 class AuthResponse(BaseModel):
@@ -37,6 +39,12 @@ class StudentRegistration(AccountRegistration):
 
 class TeacherCreate(AccountRegistration):
     pass
+
+
+class AdminStudentUpdate(BaseModel):
+    email: EmailStr
+    full_name: str = Field(min_length=2, max_length=200)
+    roll_no: str = Field(min_length=1, max_length=64)
 
 
 class ProfileUpdate(BaseModel):
@@ -69,6 +77,11 @@ class PageMeta(BaseModel):
     page_size: int
     total: int
     pages: int
+
+
+class UserPage(BaseModel):
+    items: list[UserOut]
+    meta: PageMeta
 
 
 class GroupPage(BaseModel):
@@ -124,6 +137,22 @@ class AttendanceOut(BaseModel):
 class AttendancePage(BaseModel):
     items: list[AttendanceOut]
     meta: PageMeta
+
+
+class StudentAttendanceSummary(BaseModel):
+    student_id: UUID
+    user_id: UUID
+    roll_no: str
+    full_name: str
+    present: int
+    absent: int
+    percentage: float
+
+
+class GroupAttendanceSummary(BaseModel):
+    group_id: UUID
+    total_sessions: int
+    students: list[StudentAttendanceSummary]
 
 
 class SessionPhotoOut(BaseModel):

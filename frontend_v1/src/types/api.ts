@@ -6,6 +6,8 @@ export interface User {
   full_name: string;
   role: Role;
   profile_image_url: string | null;
+  is_active: boolean;
+  roll_no?: string | null;
 }
 
 export interface Group {
@@ -28,6 +30,34 @@ export interface RosterStudent {
   email: string;
   profile_image_url: string | null;
   joined_at: string;
+}
+
+export interface StudentPhoto {
+  id: string;
+  image_url: string | null;
+  similarity_to_previous: number | null;
+  is_profile: boolean;
+  created_at: string;
+}
+
+export interface StudentOut {
+  id: string;
+  user_id: string;
+  roll_no: string;
+  full_name: string;
+  profile_image_url: string | null;
+  photo_count: number;
+  photos: StudentPhoto[];
+}
+
+export interface PhotoJob {
+  id: string;
+  status: string;
+  similarity_to_previous: number | null;
+  error: string | null;
+  photo_id: string | null;
+  created_at: string;
+  completed_at: string | null;
 }
 
 export type SessionState = "created" | "processing" | "review" | "finalized" | "failed";
@@ -60,4 +90,20 @@ export interface ImportJob {
   error_file_url: string | null;
   created_at: string;
   completed_at: string | null;
+}
+
+export interface StudentAttendanceSummary {
+  student_id: string;
+  user_id: string;
+  roll_no: string;
+  full_name: string;
+  present: number;
+  absent: number;
+  percentage: number;
+}
+
+export interface GroupAttendanceSummary {
+  group_id: string;
+  total_sessions: number;
+  students: StudentAttendanceSummary[];
 }

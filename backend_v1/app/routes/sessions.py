@@ -9,11 +9,13 @@ from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile, status
 from fastapi.responses import Response, StreamingResponse
+from openpyxl import Workbook
+from openpyxl.styles import Font, PatternFill
 from sqlalchemy.orm import Session
 
 from ..config import settings
 from ..database import get_db
-from ..models import AuditLog, AttendanceRecord, AttendanceStatus, ClassSession, Group, GroupMembership, SessionPhoto, SessionState, User, UserRole
+from ..models import AuditLog, AttendanceRecord, AttendanceStatus, ClassSession, Group, GroupMembership, SessionPhoto, SessionState, Student, User, UserRole
 from ..schemas import AttendanceStatusUpdate, PageMeta, SessionAttendanceOut, SessionOut, SessionPage, SessionPhotoOut
 from ..security import CurrentUser, require_roles
 from ..storage import storage
@@ -41,7 +43,9 @@ def _authorized(session: ClassSession, user: User, db: Session) -> bool:
 
 
 def _photo_url(request: Request, photo_id: UUID) -> str:
-    return str(request.url_for("session_photo_image", photo_id=photo_id))
+    # Return a same-origin path so browser clients keep their authenticated
+    # cookies when the API is behind Vite, nginx, or another reverse proxy.
+    return str(request.url_for("session_photo_image", photo_id=photo_id).path)
 
 
 def _to_out(session: ClassSession, request: Request, user: User, db: Session) -> SessionOut:
@@ -61,6 +65,40 @@ def _to_out(session: ClassSession, request: Request, user: User, db: Session) ->
         photos=[SessionPhotoOut(id=photo.id, image_url=_photo_url(request, photo.id), expires_at=photo.expires_at, processed_at=photo.processed_at, error=photo.error, created_at=photo.created_at) for photo in session.photos],
         attendance=[SessionAttendanceOut(id=record.id, student_id=record.student_id, status=record.status, marked_at=record.marked_at) for record in attendance],
     )
+
+
+@router.get("/sessions/{session_id}/attendance.xlsx")
+def export_session_attendance(session_id: UUID, db: DbSession, user: User = Depends(require_roles(UserRole.admin, UserRole.teacher))) -> Response:
+    session = _get_session(session_id, db)
+    if not _staff_can_manage(session, user):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="You cannot export this session")
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "Attendance"
+    sheet.append(["Roll no.", "Student", "Status", "Marked at"])
+    for cell in sheet[1]:
+        cell.font = Font(bold=True, color="FFFFFF")
+        cell.fill = PatternFill("solid", fgColor="334155")
+    rows = (
+        db.query(Student, User, AttendanceRecord)
+        .join(User, User.id == Student.user_id)
+        .join(AttendanceRecord, AttendanceRecord.student_id == User.id)
+        .filter(AttendanceRecord.session_id == session.id)
+        .order_by(Student.roll_no.asc())
+        .all()
+    )
+    for student, user_row, record in rows:
+        sheet.append([student.roll_no, student.full_name, record.status.value.title(), record.marked_at.replace(tzinfo=None)])
+    sheet.freeze_panes = "A2"
+    sheet.auto_filter.ref = sheet.dimensions
+    sheet.column_dimensions["A"].width = 16
+    sheet.column_dimensions["B"].width = 28
+    sheet.column_dimensions["C"].width = 14
+    sheet.column_dimensions["D"].width = 24
+    output = BytesIO()
+    workbook.save(output)
+    filename = f"session_{session.started_at.strftime('%Y-%m-%d')}_attendance.xlsx"
+    return Response(content=output.getvalue(), media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", headers={"Content-Disposition": f'attachment; filename="{filename}"'})
 
 
 @router.post("/groups/{group_id}/sessions", response_model=SessionOut, status_code=status.HTTP_201_CREATED)
@@ -114,12 +152,12 @@ async def upload_session_photos(
     session = _get_session(session_id, db)
     if not _staff_can_manage(session, user):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="You cannot manage this session")
-    if session.state == SessionState.finalized:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Finalized sessions cannot be changed")
+    if session.state != SessionState.created:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Photos can only be added before processing starts")
     if not files:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Upload at least one classroom image")
-    if len(files) > settings.max_session_photos:
-        raise HTTPException(status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail=f"Upload at most {settings.max_session_photos} classroom images")
+    if len(session.photos) + len(files) > settings.max_session_photos:
+        raise HTTPException(status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail=f"A session can contain at most {settings.max_session_photos} classroom images")
     staged: list[str] = []
     try:
         expires_at = datetime.now(UTC) + timedelta(days=settings.session_photo_retention_days)
@@ -134,13 +172,32 @@ async def upload_session_photos(
             storage.put_bytes(key, content, file.content_type)
             staged.append(key)
             db.add(SessionPhoto(session_id=session.id, storage_key=key, content_type=file.content_type, expires_at=expires_at))
-        session.state = SessionState.processing
         db.commit()
     except Exception:
         db.rollback()
         for key in staged:
             storage.delete(key)
         raise
+    db.refresh(session)
+    return _to_out(session, request, user, db)
+
+
+@router.post("/sessions/{session_id}/process", response_model=SessionOut, status_code=status.HTTP_202_ACCEPTED)
+def process_session(
+    session_id: UUID,
+    request: Request,
+    db: DbSession,
+    user: User = Depends(require_roles(UserRole.admin, UserRole.teacher)),
+) -> SessionOut:
+    session = _get_session(session_id, db)
+    if not _staff_can_manage(session, user):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="You cannot manage this session")
+    if session.state != SessionState.created:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="This session is already processing or has been reviewed")
+    if not session.photos:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Add at least one classroom image before processing")
+    session.state = SessionState.processing
+    db.commit()
     db.refresh(session)
     process_class_session.delay(session.id)
     for photo in session.photos:

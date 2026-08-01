@@ -189,10 +189,37 @@ def process_import_job(self, import_job_id: UUID) -> dict[str, object]:
                             raise ValueError("Current roll number was not found")
                         if db.query(Student).filter(Student.roll_no == new_roll, Student.id != current.id).first():
                             raise ValueError("New roll number is already registered")
+                        email = str(data.get("email") or current.user.email).strip().lower()
+                        if db.query(User).filter(User.email == email, User.id != current.user_id).first():
+                            raise ValueError("Email is already registered")
                         current.roll_no = new_roll
                         current.full_name = full_name
                         current.user.full_name = full_name
+                        current.user.email = email
                         db.commit()
+                        job.succeeded += 1
+                    except Exception as exc:
+                        db.rollback()
+                        errors.append((row_number, str(exc)))
+                    job.processed += 1
+                    db.commit()
+                    self.update_state(state="PROGRESS", meta={"processed": job.processed, "total": job.total, "failed": len(errors)})
+            elif job.kind == "teacher_create":
+                required = {"email", "fullname"}
+                if not required.issubset(headers):
+                    raise ValueError("Excel must contain email and full name columns")
+                for row_number, row in enumerate(values, start=2):
+                    try:
+                        data = {headers[index]: row[index] if index < len(row) else None for index in range(len(headers))}
+                        email = str(data.get("email") or "").strip().lower()
+                        full_name = str(data.get("fullname") or "").strip()
+                        if not email or not full_name or db.query(User).filter(User.email == email).first():
+                            raise ValueError("Valid name/email are required and email must be unique")
+                        password = str(data.get("password") or "").strip() or _temporary_password()
+                        teacher = User(email=email, full_name=full_name, password_hash=hash_password(password), role=UserRole.teacher)
+                        db.add(teacher)
+                        db.commit()
+                        send_welcome_email_task.delay(email, full_name, password)
                         job.succeeded += 1
                     except Exception as exc:
                         db.rollback()

@@ -24,7 +24,7 @@ DbSession = Annotated[Session, Depends(get_db)]
 
 
 def _photo_url(request: Request, photo_id: UUID) -> str:
-    return str(request.url_for("student_photo_image", photo_id=photo_id))
+    return str(request.url_for("student_photo_image", photo_id=photo_id).path)
 
 
 def _to_out(student: Student, request: Request) -> StudentOut:
@@ -81,6 +81,15 @@ async def upload_profile_photo(
     process_student_photo.delay(job.id)
     db.refresh(job)
     return PhotoJobOut.model_validate(job)
+
+
+@router.get("/me/photo-jobs/{job_id}", response_model=PhotoJobOut)
+def my_photo_job_status(job_id: UUID, db: DbSession, user: User = Depends(require_roles(UserRole.student))) -> PhotoProcessingJob:
+    student = _student_for_user(user, db)
+    job = db.get(PhotoProcessingJob, job_id)
+    if job is None or job.student_id != student.id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Photo job not found")
+    return job
 
 
 @router.get("/photos/{photo_id}/image", name="student_photo_image", include_in_schema=False)

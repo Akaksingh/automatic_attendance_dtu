@@ -8,13 +8,16 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
 from fastapi.responses import Response
-from openpyxl import load_workbook
+from openpyxl import Workbook, load_workbook
+from openpyxl.utils import get_column_letter
+from openpyxl.styles import Font, PatternFill
 from sqlalchemy.orm import Session
+from sqlalchemy import or_
 
 from ..database import get_db
 from ..config import settings
-from ..models import AuditLog, AttendanceRecord, ClassSession, Group, GroupMembership, ImportJob, Student, User, UserRole
-from ..schemas import AddStudentRequest, AttendanceOut, AttendancePage, GroupCreate, GroupOut, GroupPage, GroupRosterImportOut, GroupRosterPage, GroupRosterResult, GroupRosterStudentOut, GroupUpdate, ImportJobOut, JoinGroupRequest, PageMeta
+from ..models import AttendanceStatus, AuditLog, AttendanceRecord, ClassSession, Group, GroupMembership, ImportJob, SessionState, Student, User, UserRole
+from ..schemas import AddStudentRequest, AttendanceOut, AttendancePage, GroupAttendanceSummary, GroupCreate, GroupOut, GroupPage, GroupRosterImportOut, GroupRosterPage, GroupRosterResult, GroupRosterStudentOut, GroupUpdate, ImportJobOut, JoinGroupRequest, PageMeta, StudentAttendanceSummary
 from ..security import CurrentUser, require_roles
 from ..storage import storage
 from ..tasks import process_import_job
@@ -66,13 +69,16 @@ def _add_student_by_roll_no(group: Group, roll_no: str, db: Session) -> User:
 
 
 @router.get("", response_model=GroupPage)
-def list_groups(user: CurrentUser, db: DbSession, page: int = Query(1, ge=1), page_size: int = Query(25, ge=1, le=100)) -> GroupPage:
+def list_groups(user: CurrentUser, db: DbSession, page: int = Query(1, ge=1), page_size: int = Query(25, ge=1, le=100), search: str | None = Query(None, max_length=100)) -> GroupPage:
     if user.role == UserRole.admin:
         query = db.query(Group).order_by(Group.created_at.desc())
     elif user.role == UserRole.teacher:
         query = db.query(Group).filter(Group.owner_id == user.id).order_by(Group.created_at.desc())
     else:
         query = db.query(Group).join(GroupMembership).filter(GroupMembership.student_id == user.id).order_by(Group.created_at.desc())
+    if search and search.strip():
+        term = f"%{search.strip()}%"
+        query = query.filter(or_(Group.name.ilike(term), Group.join_code.ilike(term)))
     total = query.count()
     items = query.offset((page - 1) * page_size).limit(page_size).all()
     return GroupPage(items=items, meta=PageMeta(page=page, page_size=page_size, total=total, pages=(total + page_size - 1) // page_size))
@@ -121,6 +127,21 @@ def archive_group(
         from datetime import UTC, datetime
         group.archived_at = datetime.now(UTC)
         db.add(AuditLog(actor_id=user.id, action="group.archived", entity_type="group", entity_id=group.id))
+        db.commit()
+        db.refresh(group)
+    return group
+
+
+@router.post("/{group_id}/unarchive", response_model=GroupOut)
+def unarchive_group(
+    group_id: UUID,
+    db: DbSession,
+    user: User = Depends(require_roles(UserRole.admin, UserRole.teacher)),
+) -> Group:
+    group = _get_manageable_group(group_id, user, db)
+    if group.archived_at is not None:
+        group.archived_at = None
+        db.add(AuditLog(actor_id=user.id, action="group.unarchived", entity_type="group", entity_id=group.id))
         db.commit()
         db.refresh(group)
     return group
@@ -288,3 +309,67 @@ def group_attendance(group_id: UUID, user: CurrentUser, db: DbSession, page: int
         for record, session, group_row in rows
     ]
     return AttendancePage(items=items, meta=PageMeta(page=page, page_size=page_size, total=total, pages=(total + page_size - 1) // page_size))
+
+
+def _finalized_attendance_data(group: Group, db: Session) -> tuple[list[ClassSession], list[tuple[GroupMembership, Student, User]], dict[tuple[UUID, UUID], AttendanceStatus]]:
+    sessions = db.query(ClassSession).filter(ClassSession.group_id == group.id, ClassSession.state == SessionState.finalized).order_by(ClassSession.started_at.asc()).all()
+    roster = (
+        db.query(GroupMembership, Student, User)
+        .join(Student, Student.user_id == GroupMembership.student_id)
+        .join(User, User.id == Student.user_id)
+        .filter(GroupMembership.group_id == group.id)
+        .order_by(Student.roll_no.asc())
+        .all()
+    )
+    session_ids = [session.id for session in sessions]
+    records = db.query(AttendanceRecord).filter(AttendanceRecord.session_id.in_(session_ids)).all() if session_ids else []
+    statuses = {(record.session_id, record.student_id): record.status for record in records}
+    return sessions, roster, statuses
+
+
+def _attendance_workbook(group: Group, sessions: list[ClassSession], roster: list[tuple[GroupMembership, Student, User]], statuses: dict[tuple[UUID, UUID], AttendanceStatus]) -> Workbook:
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "Attendance"
+    headers = ["Roll no.", "Student", "Present", "Absent", "Attendance %"] + [session.started_at.strftime("%d %b %Y") for session in sessions]
+    sheet.append(headers)
+    for cell in sheet[1]:
+        cell.font = Font(bold=True, color="FFFFFF")
+        cell.fill = PatternFill("solid", fgColor="334155")
+    for _, student, user in roster:
+        present = sum(statuses.get((session.id, user.id)) == AttendanceStatus.present for session in sessions)
+        absent = len(sessions) - present
+        percentage = round((present / len(sessions)) * 100, 2) if sessions else 0.0
+        values = [student.roll_no, student.full_name, present, absent, percentage]
+        values.extend("Present" if statuses.get((session.id, user.id)) == AttendanceStatus.present else "Absent" for session in sessions)
+        sheet.append(values)
+    sheet.freeze_panes = "F2"
+    sheet.auto_filter.ref = sheet.dimensions
+    for column, width in {"A": 16, "B": 28, "C": 12, "D": 12, "E": 16}.items():
+        sheet.column_dimensions[column].width = width
+    for index in range(6, 6 + len(sessions)):
+        sheet.column_dimensions[get_column_letter(index)].width = 16
+    return workbook
+
+
+@router.get("/{group_id}/summary", response_model=GroupAttendanceSummary)
+def group_attendance_summary(group_id: UUID, user: CurrentUser, db: DbSession) -> GroupAttendanceSummary:
+    group = _get_visible_group(group_id, user, db)
+    sessions, roster, statuses = _finalized_attendance_data(group, db)
+    students = []
+    for _, student, user_row in roster:
+        present = sum(statuses.get((session.id, user_row.id)) == AttendanceStatus.present for session in sessions)
+        absent = len(sessions) - present
+        students.append(StudentAttendanceSummary(student_id=student.id, user_id=user_row.id, roll_no=student.roll_no, full_name=student.full_name, present=present, absent=absent, percentage=round((present / len(sessions)) * 100, 2) if sessions else 0.0))
+    return GroupAttendanceSummary(group_id=group.id, total_sessions=len(sessions), students=students)
+
+
+@router.get("/{group_id}/attendance.xlsx")
+def export_group_attendance(group_id: UUID, user: CurrentUser, db: DbSession) -> Response:
+    group = _get_visible_group(group_id, user, db)
+    sessions, roster, statuses = _finalized_attendance_data(group, db)
+    workbook = _attendance_workbook(group, sessions, roster, statuses)
+    output = BytesIO()
+    workbook.save(output)
+    filename = f"{group.name.strip().replace(' ', '_')}_attendance.xlsx"
+    return Response(content=output.getvalue(), media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", headers={"Content-Disposition": f'attachment; filename="{filename}"'})
